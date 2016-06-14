@@ -21,9 +21,9 @@ defmodule YProcess.Mixfile do
 
   defp deps do
     [{:credo, "~> 0.4", only: [:dev, :test]},
-     {:inch_ex, ">= 0.0.0", only: :dev},
      {:earmark, ">= 0.0.0", only: :dev},
-     {:ex_doc, "~> 0.11", only: :dev}]
+     {:ex_doc, "~> 0.11", only: :dev},
+     {:inch_ex, ">= 0.0.0", only: [:dev, :docs]}]
   end
 
   defp docs do

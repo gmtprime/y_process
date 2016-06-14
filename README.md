@@ -1,6 +1,6 @@
 # YProcess
 
-[![Build Status](https://travis-ci.org/gmtprime/y_process.svg?branch=master)](https://travis-ci.org/gmtprime/y_process) [![Hex pm](http://img.shields.io/hexpm/v/y_process.svg?style=flat)](https://hex.pm/packages/y_process) [![hex.pm downloads](https://img.shields.io/hexpm/dt/y_process.svg?style=flat)](https://hex.pm/packages/y_process)
+[![Build Status](https://travis-ci.org/gmtprime/y_process.svg?branch=master)](https://travis-ci.org/gmtprime/y_process) [![Hex pm](http://img.shields.io/hexpm/v/y_process.svg?style=flat)](https://hex.pm/packages/y_process) [![hex.pm downloads](https://img.shields.io/hexpm/dt/y_process.svg?style=flat)](https://hex.pm/packages/y_process) [![Deps Status](https://beta.hexfaktor.org/badge/all/github/gmtprime/y_process.svg)](https://beta.hexfaktor.org/github/gmtprime/y_process) [![Inline docs](http://inch-ci.org/github/gmtprime/y_process.svg?branch=master)](http://inch-ci.org/github/gmtprime/y_process)
 
 A behaviour module for implementing a server of a client-server relation with
 publisher-subscriber capabilities. This is a generalized implementation of a

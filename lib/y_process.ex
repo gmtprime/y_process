@@ -915,29 +915,6 @@ defmodule YProcess do
   end
 
   ##
-  # Creates the channels.
-  defp create(channels) when is_list(channels) do
-    _ = channels |> Enum.map(&create/1)
-    :ok
-  end
-  defp create(channel) do
-    id = {@channel_header, channel}
-    created? = :ok == :pg2.create(id)
-    if not created?, do: exit({:cannot_create_channel, channel}), else: id
-  end
-
-  ##
-  # Deletes the channels.
-  defp delete(channels) when is_list(channels) do
-    _ = channels |> Enum.map(&delete/1)
-    :ok
-  end
-  defp delete(channel) do
-    id = {@channel_header, channel}
-    :pg2.delete(id)
-  end
-
-  ##
   # Enters the `GenServer` loop, but first joins the channels.
   defp enter_join(module, mod_state, channels, name, opts, timeout) do
     try do
@@ -1025,6 +1002,29 @@ defmodule YProcess do
   # Basic functions helpers.
 
   ##
+  # Creates the channels.
+  defp create(channels) when is_list(channels) do
+    _ = channels |> Enum.map(&create/1)
+    :ok
+  end
+  defp create(channel) do
+    id = {@channel_header, channel}
+    created? = :ok == :pg2.create(id)
+    if not created?, do: exit({:cannot_create_channel, channel}), else: id
+  end
+
+  ##
+  # Deletes the channels.
+  defp delete(channels) when is_list(channels) do
+    _ = channels |> Enum.map(&delete/1)
+    :ok
+  end
+  defp delete(channel) do
+    id = {@channel_header, channel}
+    :pg2.delete(id)
+  end
+
+  ##
   # Joins the channels.
   defp join(channels) when is_list(channels) do
     _ = channels |> Enum.map(&join/1)
@@ -1101,6 +1101,22 @@ defmodule YProcess do
   end
   defp emit(channels, message, timeout) do
     emit_ack(channels, message, timeout)
+  end
+
+  @doc false
+  def gen_channel_name(channel) do
+    {@channel_header, channel}
+  end
+
+  @doc false
+  def gen_async_message(channel, message) do
+    {@async_header, channel, message}
+  end
+
+  @doc false
+  def gen_sync_message(channel, message) do
+    from = {self(), make_ref()}
+    {@sync_header, channel, message, from}
   end
 
   #############################################################################

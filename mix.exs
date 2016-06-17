@@ -5,7 +5,7 @@ defmodule YProcess.Mixfile do
 
   def project do
     [app: :y_process,
-     version: "0.0.1",
+     version: @version,
      elixir: "~> 1.2",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
@@ -20,9 +20,9 @@ defmodule YProcess.Mixfile do
   end
 
   defp deps do
-    [{:credo, "~> 0.4", only: [:dev, :test]},
-     {:earmark, ">= 0.0.0", only: :dev},
+    [{:earmark, ">= 0.0.0", only: :dev},
      {:ex_doc, "~> 0.11", only: :dev},
+     {:credo, "~> 0.4", only: [:dev, :docs]},
      {:inch_ex, ">= 0.0.0", only: [:dev, :docs]}]
   end
 

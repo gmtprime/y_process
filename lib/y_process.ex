@@ -157,17 +157,92 @@ defmodule YProcess do
       {#PID<0.194.0>, 1}
       iex(5)>
 
+  ## Backends
+
+  The backend behaviour defines the way the processes create, delete, join, leave
+  channels and emit messages. By default, the processes use the
+  `YProcess.Backend.PG2` backend that uses `:pg2`, but it is possible to use the
+  `YProcess.Backend.PhoenixPubSub` that uses phoenix pubsub and also use any of
+  its adapters.
+
+  The backend behaviour needs to implement the following callbacks:
+
+      # Callback to create a `channel`.
+      @callback create(channel) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback to delete a `channel`.
+      @callback delete(channel) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback used to make a process with `pid` a `channel`.
+      @callback join(channel, pid) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback used to make a process with `pid` leave a `channel`.
+      @callback leave(channel, pid) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback used to send a `message` to a `channel`.
+      @callback emit(channel, message) :: :ok | {:error, reason}
+        when channel: YProcess.channel, message: term, reason: term
+
+  To use a backend, just modify the configuration of the application (explained in
+  the next sections) or pass the backend in the module definition i.e:
+
+      defmodule Test do
+        use YProcess, backend: YProcess.Backend.PhoenixPubSub
+        (...)
+      end
+
+  For the backends provided, there are two aliases for the modules:
+    
+  * `:pg2` for `YProcess.Backend.PG2`
+  * `:phoenix_pub_sub` for `YProcess.Backend.PhoenixPubSub`
+
+  The shorter version of the module `Test` defined above would be:
+
+      defmodule Test do
+        use YProcess, backend: :phoenix_pub_sub
+        (...)
+      end
+
+  ### Backend Configuration
+
+  To configure the backend globally for all the `YProcess`es just set the following:
+
+  * For `YProcess.Backend.PG2`
+
+          config :y_process,
+            backend: YProces.Backend.PG2
+
+  * For `YProcess.Backend.PhoenixPubSub`
+
+          config :y_process,
+            backend: YProcess.Backend.PhoenixPubSub
+            opts: [app_name: MyApp.Endpoint]
+
+          # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
+          # for more information.
+          config :my_app, MyApp.Endpoint,
+            pubsub: [adapter: Phoenix.PubSub.PG2,
+                     pool_size: 1,
+                     name: MyApp.PubSub]
+
+  where `:my_app` is the name of the application. 
+
   ## Installation
 
   Add `YProcess` as a dependency in your `mix.exs` file.
 
       def deps do
-          [{:y_process, "~> 0.0.1"}]
+          [{:y_process, "~> 0.0.2"}]
       end
 
   After you're done, run this in your shell to fetch the new dependency:
 
       $ mix deps.get
+
   """
   use Behaviour
   @behaviour :gen_server

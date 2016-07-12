@@ -9,14 +9,14 @@ defmodule YProcess.Backend.PhoenixPubSub do
   created in `Phoenix.PubSub` so this is just for completion. This function
   does nothing.
   """
-  def create(channel), do: :ok
+  def create(_), do: :ok
 
   @doc """
   Deletes a `channel` in `Phoenix.PubSub`. The channels don't need to be
   deleted in `Phoenix.PubSub` so this is just for completion. This function
   does nothing.
   """
-  def delete(channel), do: :ok
+  def delete(_), do: :ok
 
   ##
   # Transforms a channel to a channel name understood by Phoenix.PubSub
@@ -48,11 +48,12 @@ defmodule YProcess.Backend.PhoenixPubSub do
   @doc """
   The process with the `pid` joins a `channel` in `Phoenix.PubSub`.
   """
-  def join(channel, pid) do
+  def join(channel, _pid) do
     channel_name = transform_name(channel)
     case get_app_name() do
       {:ok, name} ->
-        Phoenix.Pubsub.subscribe(name, pid, channel_name)
+        Phoenix.PubSub.unsubscribe(name, channel_name)
+        Phoenix.PubSub.subscribe(name, channel_name)
       error ->
         error
     end
@@ -61,11 +62,11 @@ defmodule YProcess.Backend.PhoenixPubSub do
   @doc """
   The process with the `pid` leaves a `channel` in `Phoenix.PubSub`.
   """
-  def leave(channel, pid) do
+  def leave(channel, _pid) do
     channel_name = transform_name(channel)
     case get_app_name() do
       {:ok, name} ->
-        Phoenix.Pubsub.unsubscribe(name, pid, channel_name)
+        Phoenix.PubSub.unsubscribe(name, channel_name)
       error ->
         error
     end
@@ -78,7 +79,7 @@ defmodule YProcess.Backend.PhoenixPubSub do
     channel_name = transform_name(channel)
     case get_app_name() do
       {:ok, name} ->
-        Phoenix.Pubsub.broadcast(name, channel_name, message)
+        Phoenix.PubSub.broadcast(name, channel_name, message)
       error ->
         error
     end

@@ -157,29 +157,110 @@ defmodule YProcess do
       {#PID<0.194.0>, 1}
       iex(5)>
 
+  ## Backends
+
+  The backend behaviour defines the way the processes create, delete, join,
+  leave channels and emit messages. By default, the processes use the
+  `YProcess.Backend.PG2` backend that uses `:pg2`, but it is possible to use the
+  `YProcess.Backend.PhoenixPubSub` that uses phoenix pubsub and also use any of
+  its adapters.
+
+  The backend behaviour needs to implement the following callbacks:
+
+      # Callback to create a `channel`.
+      @callback create(channel) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback to delete a `channel`.
+      @callback delete(channel) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback used to make a process with `pid` a `channel`.
+      @callback join(channel, pid) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback used to make a process with `pid` leave a `channel`.
+      @callback leave(channel, pid) :: :ok | {:error, reason}
+        when channel: YProcess.channel, reason: term
+
+      # Callback used to send a `message` to a `channel`.
+      @callback emit(channel, message) :: :ok | {:error, reason}
+        when channel: YProcess.channel, message: term, reason: term
+
+  To use a backend, just modify the configuration of the application (explained
+  in the next sections) or pass the backend in the module definition i.e:
+
+      defmodule Test do
+        use YProcess, backend: Backend.PhoenixPubSub
+        (...)
+      end
+
+  For the backends provided, there are two aliases for the modules:
+
+  * `:pg2` for `YProcess.Backend.PG2`
+  * `:phoenix_pub_sub` for `YProcess.Backend.PhoenixPubSub`
+
+  The shorter version of the module `Test` defined above would be:
+
+      defmodule Test do
+        use YProcess, backend: :phoenix_pub_sub
+        (...)
+      end
+
+  ### Backend Configuration
+
+  To configure the backend globally for all the `YProcess`es just set the
+  following:
+
+  * For `YProcess.Backend.PG2`
+
+          config :y_process,
+            backend: YProces.Backend.PG2
+
+  * For `YProcess.Backend.PhoenixPubSub`
+
+          config :y_process,
+            backend: Backend.PhoenixPubSub
+            opts: [app_name: MyApp.Endpoint]
+
+          # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
+          # for more information.
+          config :my_app, MyApp.Endpoint,
+            pubsub: [adapter: Phoenix.PubSub.PG2,
+                     pool_size: 1,
+                     name: MyApp.PubSub]
+
+  where `:my_app` is the name of the application.
+
   ## Installation
 
   Add `YProcess` as a dependency in your `mix.exs` file.
 
       def deps do
-          [{:y_process, "~> 0.0.1"}]
+          [{:y_process, "~> 0.0.2"}]
       end
 
   After you're done, run this in your shell to fetch the new dependency:
 
       $ mix deps.get
+
   """
   use Behaviour
   @behaviour :gen_server
   alias __MODULE__, as: YProcess
+  alias YProcess.Backend
 
-  @channel_header :"$Y_CHANNEL"
-  @event_header :"$Y_EVENT"
-  @deliver :"$Y_DELIVER"
-  @no_deliver :"$Y_NODELIVER"
+  ##########
+  # Headers.
 
-  @typedoc "Synchronous acked message timeout."
-  @type ack_timeout :: timeout
+  @cast_header :"Y_CAST_EVENT"
+  @call_header :"Y_CALL_EVENT"
+  @emit_ack_header :"Y_EMIT_ACK_EVENT"
+  @emit_noack_header :"Y_EMIT_NOACK_EVENT"
+  @ack_header :"Y_ACK_EVENT"
+
+  ########
+  # Types.
 
   @typedoc "Channel. Shouldn't be a list."
   @type channel :: term
@@ -196,39 +277,16 @@ defmodule YProcess do
   @typedoc "Reply to the caller."
   @type reply :: term
 
-  @typedoc "Synchronous callback response."
-  @type sync_response ::
-    {:reply, reply, new_state} |
-    {:reply, reply, new_state, timeout | :hibernate} |
-    {:noreply, new_state} |
-    {:noreply, new_state, timeout | :hibernate} |
-    {:create, channels, reply, new_state} |
-    {:create, channels, reply, new_state, timeout | :hibernate} |
-    {:emit, channels, new_message, reply, new_state} |
-    {:emit, channels, new_message, reply, new_state, timeout | :hibernate} |
-    {:emit_ack, channels, new_message, ack_timeout, reply, new_state} |
-    {:emit_ack, channels, new_message, ack_timeout, reply, new_state,
-     timeout | :hibernate} |
-    {:join, channels, reply, new_state} |
-    {:join, channels, reply, new_state, timeout | :hibernate} |
-    {:leave, channels, reply, new_state} |
-    {:leave, channels, reply, new_state, timeout | :hibernate} |
-    {:delete, channels, reply, new_state} |
-    {:delete, channels, reply, new_state, timeout | :hibernate} |
-    {:stop, reason :: term, reply, new_state} |
-    {:stop, reason :: term, new_state}
-
   @typedoc "Asynchronous callback response."
   @type async_response ::
-    {:noreply, new_state, term} |
+    {:noreply, new_state} |
     {:noreply, new_state, timeout | :hibernate} |
     {:create, channels, new_state} |
     {:create, channels, new_state, timeout | :hibernate} |
     {:emit, channels, new_message, new_state} |
     {:emit, channels, new_message, new_state, timeout | :hibernate} |
-    {:emit_ack, channels, new_message, ack_timeout, new_state} |
-    {:emit_ack, channels, new_message, ack_timeout, new_state,
-     timeout | :hibernate} |
+    {:emit_ack, channels, new_message, new_state} |
+    {:emit_ack, channels, new_message, new_state, timeout | :hibernate} |
     {:join, channels, new_state} |
     {:join, channels, new_state, timeout | :hibernate} |
     {:leave, channels, new_state} |
@@ -237,6 +295,29 @@ defmodule YProcess do
     {:delete, channels, new_state, timeout | :hibernate} |
     {:stop, reason :: term, new_state}
 
+  @typedoc "Synchronous callback response."
+  @type sync_response ::
+    {:reply, reply, new_state} |
+    {:reply, reply, new_state, timeout | :hibernate} |
+    {:rcreate, channels, reply, new_state} |
+    {:rcreate, channels, reply, new_state, timeout | :hibernate} |
+    {:remit, channels, new_message, reply, new_state} |
+    {:remit, channels, new_message, reply, new_state, timeout | :hibernate} |
+    {:remit_ack, channels, new_message, reply, new_state} |
+    {:remit_ack, channels, new_message, reply, new_state,
+     timeout | :hibernate} |
+    {:rjoin, channels, reply, new_state} |
+    {:rjoin, channels, reply, new_state, timeout | :hibernate} |
+    {:rleave, channels, reply, new_state} |
+    {:rleave, channels, reply, new_state, timeout | :hibernate} |
+    {:rdelete, channels, reply, new_state} |
+    {:rdelete, channels, reply, new_state, timeout | :hibernate} |
+    {:stop, reason :: term, reply, new_state} |
+    async_response
+
+
+  ############
+  # Callbacks.
 
   @doc """
   Invoked when the server is started. `start_link/3` (`start/3`) will block
@@ -305,7 +386,8 @@ defmodule YProcess do
     {:join, channels, state} |
     {:join, channels, state, timeout | :hibernate} |
     :ignore |
-    {:stop, reason :: any} when state: any, channels: list
+    {:stop, reason :: any}
+      when state: any, channels: list
 
   @doc """
   Invoked to handle synchronous `call/3` messages. `call/3` will block until a
@@ -350,56 +432,52 @@ defmodule YProcess do
   `{:noreply, new_state}` except a timeout or hibernation occurs as with a
   `:reply` tuple.
 
-  Returning `{:create, channels, reply, new_state}` will create the `channels`
+  Returning `{:rcreate, channels, reply, new_state}` will create the `channels`
   and `reply` back to `call/3` caller.
 
-  Returning `{:create, channels, reply, new_state, timeout | :hibernate}` is
-  similar to `{:create, channels, reply, new_state}` except a timeout or
+  Returning `{:rcreate, channels, reply, new_state, timeout | :hibernate}` is
+  similar to `{:rcreate, channels, reply, new_state}` except a timeout or
   hibernation occurs as with the `:reply` tuple.
 
-  Returning `{:emit, channels, message, reply, new_state}` will emit a
+  Returning `{:remit, channels, message, reply, new_state}` will emit a
   `message` in several `channels` while replying back to the `call/3` caller.
-  The `YProcess` doesn't know whether the messages arrived to the subscribers
-  or not.
+  The `YProcess` does not receive confirmations for the messages sent.
 
   Returning
-  `{:emit, channels, message, reply, new_state, timeout | :hibernate}`
-  is similar to `{:emit, channels, message, new_state}` except a timeout
+  `{:remit, channels, message, reply, new_state, timeout | :hibernate}`
+  is similar to `{:remit, channels, message, new_state}` except a timeout
   or hibernation occurs as with the `:reply` tuple.
 
-  Returning `{:emit_ack, channels, message, ack_timeout, reply, new_state}`
+  Returning `{:remit_ack, channels, message, reply, new_state}`
   will emit a `message` in several `channels` while sending a `reply` back to
-  the `call/3` caller. The `YProcess` expects a confirmation from every
-  subscriber in `handle_call/2`. The `ack_timeout` is the time the `Task` will
-  wait for a response from the subscriber. The possible messages are that can
-  be received in `handle_info/2` are `{:"$Y_DELIVER", channel, message, pid}`
-  for delivered messages or `{:"$Y_NODELIVER", channel, message, pid}` for not
-  deliveref messages.
+  the `call/3` caller. The `YProcess` receives confirmations from every
+  subscriber in `handle_info/2`. The confirmation message is
+  `{:DELIVER, pid, channel, message}` where `pid` is the PID of the subscriber.
 
   Returning
-  `{:emit_ack, channels, message, ack_timeout, new_state, timeout | :hibernate}`
-  is similar to `{:emit_ack, channels, message, ack_timeout, reply, new_state}`
+  `{:remit_ack, channels, message, reply, new_state, timeout | :hibernate}`
+  is similar to `{:remit_ack, channels, message, reply, new_state}`
   except a timeout or hibernation occurs as with the `:reply` tuple.
 
-  Returning `{:join, channels, reply, new_state}` will join the `YProcess` to
-  the `channels` and send a `reply` back to the `call/3` caller.
+  Returning `{:rjoin, channels, reply, new_state}` will join the `YProcess`
+  to the `channels` and send a `reply` back to the `call/3` caller.
 
-  Returning `{:join, channels, reply, new_state, timeout | :hibernate}` is
-  similar to `{:join, channels, reply, new_state}` except a timeout or
+  Returning `{:rjoin, channels, reply, new_state, timeout | :hibernate}` is
+  similar to `{:rjoin, channels, reply, new_state}` except a timeout or
   hibernation occurs as with the `:reply` tuple.
 
-  Returning `{:leave, channels, reply, new_state}` the `YProcess` will leave the
-  `channels` and send a `reply` back to the `call/3` caller.
+  Returning `{:rleave, channels, reply, new_state}` the `YProcess` will
+  leave the `channels` and send a `reply` back to the `call/3` caller.
 
-  Returning `{:leave, channels, reply, new_state, timeout | :hibernate}` is
-  similar to `{:leave, channels, reply, new_state}` except a timeout or
+  Returning `{:rleave, channels, reply, new_state, timeout | :hibernate}` is
+  similar to `{:rleave, channels, reply, new_state}` except a timeout or
   hibernation occurs as with the `:reply` tuple.
 
-  Returning `{:delete, channels, reply, new_state}` will delete the `channels`
+  Returning `{:rdelete, channels, reply, new_state}` will delete the `channels`
   and `reply` back to `call/3` caller.
 
-  Returning `{:delete, channels, reply, new_state, timeout | :hibernate}` is
-  similar to `{:delete, channels, reply, new_state}` except a timeout or
+  Returning `{:rdelete, channels, reply, new_state, timeout | :hibernate}`
+  is similar to `{:rdelete, channels, reply, new_state}` except a timeout or
   hibernation occurs as with the `:reply` tuple.
 
   Returning `{:stop, reason, reply, new_state}` stops the loop and
@@ -408,6 +486,8 @@ defmodule YProcess do
 
   Returning `{:stop, reason, new_state}` is similar to
   `{:stop, reason, reply, new_state}` except a reply is not sent.
+
+  It also returns the same tuples from `handle_cast/2`.
   """
   @callback handle_call(request :: term, from :: {pid, term}, state :: term) ::
     sync_response
@@ -418,8 +498,76 @@ defmodule YProcess do
   `request` is the request message sent by a `cast/2` and `state` is the current
   state of the `YProcess`.
 
-  The return values are similar to the ones in `handle_call/3` except the
-  caller is not expecting a reply.
+  Returning `{:noreply, new_state}` updates the current state to the
+  `new_state`.
+
+  Returning `{:noreply, new_state, timeout}` is similar to
+  `{:noreply, new_state}` except `handle_info(:timeout, new_state)` will
+  be called after `timeout` milliseconds if no messages are received.
+
+  Returning `{:noreply, new_state, :hibernate}` is similar to
+  `{:noreply, new_state}` except the process is hibernated and will
+  continue the loop once a messages is in its message queue. If a message is
+  already in the message queue this will immediately. Hibernating a `YProcess`
+  causes garbage collection and leaves a continuous heap that minimises the
+  memory used by the process.
+
+  Hibernating should not be used aggressively as too much time could be spent
+  garbage collecting. Normally, it should be only be used when a message is not
+  expected soon and minimising the memory of the process is shown to be
+  beneficial.
+
+  Returning `{:create, channels, new_state}` similar to
+  `{:rcreate, channels, reply, new_state}` in `handle_call/3`, but with no
+  reply to the caller.
+
+  Returning `{:create, channels, new_state, timeout | :hibernate}` is similar to
+  `{:rcreate, channels, reply, new_state, timeout | :hibernate}` in
+  `handle_call/3`, but with no reply to the caller.
+
+  Returning `{:delete, channels, new_state}` similar to
+  `{:rdelete, channels, reply, new_state}` in `handle_call/3`, but with no
+  reply to the caller.
+
+  Returning `{:delete, channels, new_state, timeout | :hibernate}` is similar
+  to `{:rdelete, channels, reply, new_state, timeout | :hibernate}` in
+  `handle_call/3`, but with no reply to the caller.
+
+  Returning `{:join, channels, new_state}` similar to
+  `{:rjoin, channels, reply, new_state}` in `handle_call/3`, but with no
+  reply to the caller.
+
+  Returning `{:join, channels, new_state, timeout | :hibernate}` is similar to
+  `{:rjoin, channels, reply, new_state, timeout | :hibernate}` in
+  `handle_call/3`, but with no reply to the caller.
+
+  Returning `{:leave, channels, new_state}` similar to
+  `{:rleave, channels, reply, new_state}` in `handle_call/3`, but with no
+  reply to the caller.
+
+  Returning `{:leave, channels, new_state, timeout | :hibernate}` is similar to
+  `{:rleave, channels, reply, new_state, timeout | :hibernate}` in
+  `handle_call/3`, but with no reply to the caller.
+
+  Returning `{:emit, channels, message, new_state}` similar to
+  `{:remit, channels, message, reply, new_state}` in `handle_call/3`, but
+  with no reply to the caller.
+
+  Returning `{:emit, channels, message, new_state, timeout | :hibernate}` is
+  similar to
+  `{:remit, channels, message, reply, new_state, timeout | :hibernate}`
+  in `handle_call/3`, but with no reply to the caller.
+
+  Returning `{:emit_ack, channels, message, new_state}` similar to
+  `{:remit_ack, channels, message, reply, new_state}` in `handle_call/3`,
+  but with no reply to the caller.
+
+  Returning `{:emit_ack, channels, message, new_state, timeout | :hibernate}` is
+  similar to
+  `{:remit_ack, channels, message, reply, new_state, timeout | :hibernate}`
+  in `handle_call/3`, but with no reply to the caller.
+
+  Returning `{:stop, reason, new_state}` stops the `YProcess` with `reason`.
   """
   @callback handle_cast(request :: term, state :: term) :: async_response
 
@@ -428,6 +576,8 @@ defmodule YProcess do
 
   Receives the `message` and the current `YProcess` `state`. When a timeout
   occurs the message is `:timeout`.
+
+  Returns the same output as `handle_cast/2`.
   """
   @callback handle_info(message :: term | :timeout, state :: term) ::
     async_response
@@ -437,6 +587,8 @@ defmodule YProcess do
 
   `channel` is the channel from which the `message` is been received. `state`
   is the current state of the `YProcess`.
+
+  Returns the same output as `handle_cast/2`
   """
   @callback handle_event(channel :: term, message :: term, state ::term) ::
     async_response
@@ -479,12 +631,31 @@ defmodule YProcess do
     {:ok, new_state :: term} |
     {:error, reason :: term} when old_vsn: term | {:down, term}
 
-  defmacro __using__(_) do
+  @doc false
+  def get_backend(backend) do
+    case backend do
+      nil ->
+        value = Application.get_env(:y_process, :backend, Backend.PG2)
+        get_backend(value)
+      :pg2 -> Backend.PG2
+      :phoenix_pubsub -> Backend.PhoenixPubSub
+      other -> other
+    end
+  end
+
+  defmacro __using__(opts) do
+    backend = opts |> Keyword.get(:backend) |> get_backend
     quote location: :keep do
       @behaviour unquote(__MODULE__)
 
+      def get_backend do
+        unquote(backend)
+      end
+
       @doc false
-      def init(args), do: {:ok, args}
+      def init(args) do
+        {:ok, args}
+      end
 
       @doc false
       def handle_call(message, _from, state) do
@@ -505,7 +676,9 @@ defmodule YProcess do
       end
 
       @doc false
-      def handle_info(_message, state), do: {:noreply, state}
+      def handle_info(_message, state) do
+        {:noreply, state}
+      end
 
       @doc false
       def handle_event(channel, message, state) do
@@ -517,10 +690,14 @@ defmodule YProcess do
       end
 
       @doc false
-      def terminate(_reason, _state), do: :ok
+      def terminate(_reason, _state) do
+        :ok
+      end
 
       @doc false
-      def code_change(_olv_vsn, state, _extra), do: {:ok, state}
+      def code_change(_olv_vsn, state, _extra) do
+        {:ok, state}
+      end
 
       defoverridable [init: 1, handle_call: 3, handle_cast: 2, handle_info: 2,
                       handle_event: 3, terminate: 2, code_change: 3]
@@ -579,90 +756,6 @@ defmodule YProcess do
   end
 
   @doc """
-  The current `YProcess` registers the `channels`. Must be called from any of
-  the callbacks
-  """
-  @spec register_channel(channel :: list | term) :: :ok
-  def register_channel(channels) when is_list(channels) do
-    _ = create(channels)
-    :ok
-  end
-  def register_channel(channel) do
-    _ = create([channel])
-    :ok
-  end
-
-  @doc """
-  The current `YProcess` unregisters the `channels`. Must be called from any of
-  the callbacks
-  """
-  @spec unregister_channel(channel :: list | term) :: :ok
-  def unregister_channel(channels) when is_list(channels) do
-      _ = delete(channels)
-      :ok
-  end
-  def unregister_channel(channel) do
-    _ = delete([channel])
-    :ok
-  end
-
-  @doc """
-  Subscribes a `YProcess` to one `channel` or many `channels`. Must be called
-  from any of the `YProcess` callbacks.
-  """
-  @spec subscribe(channel :: list | term) :: :ok
-  def subscribe(channels) when is_list(channels) do
-    _ = join(channels)
-    :ok
-  end
-  def subscribe(channel) do
-    _ = join([channel])
-    :ok
-  end
-
-  @doc """
-  Unsubscribes a `YProcess` to one `channel` or many `channels`. Must be called
-  from any of the `YProcess` callbacks.
-  """
-  @spec unsubscribe(channel :: list | term) :: :ok
-  def unsubscribe(channels) when is_list(channels) do
-    _ = leave(channels)
-    :ok
-  end
-  def unsubscribe(channel) do
-    _ = leave([channel])
-    :ok
-  end
-
-  @doc """
-  Publishes a `message` in one `channel` or many `channels`.
-  """
-  @spec publish(channel :: list | term, message :: term) :: :ok
-  def publish(channels, message) when is_list(channels) do
-    _ = emit(channels, message)
-    :ok
-  end
-  def publish(channel, message) do
-    _ = emit([channel], message)
-    :ok
-  end
-
-  @doc """
-  Publishes a `message` in one `channel` or many `channels`. Delivery
-  confirmations are received asynchronously until `timeout` seconds. See
-  `:emit_ack` response in `handle_call/3`.
-  """
-  @spec publish(channel :: list | term, message :: term, timeout) :: :ok
-  def publish(channels, message, timeout) when is_list(channels) do
-    _ = emit(channels, message, timeout)
-    :ok
-  end
-  def publish(channel, message, timeout) do
-    _ = emit([channel], message, timeout)
-    :ok
-  end
-
-  @doc """
   Sends a reply to a request sent by `call/3`.
 
   It receives a `from` tuple and the `response` to a request.
@@ -698,10 +791,14 @@ defmodule YProcess do
   """
   defdelegate cast(conn, request), to: :gen_server
 
-  defstruct [:module, :mod_state]
+  defstruct [:module, :mod_state, :backend, :timeout]
 
   #############################################################################
   # Callback definition.
+
+  defp gen_state(module, mod_state, backend) do
+    %YProcess{module: module, mod_state: mod_state, backend: backend}
+  end
 
   ##
   # Initializes the `GenServer`.
@@ -709,6 +806,7 @@ defmodule YProcess do
   def init_it(starter, _, name, module, args, opts) do
     # There is no init/1 defined, but this function simulates it.
     Process.put(:"$initial_call", {module, :init, 1})
+    backend = module.get_backend()
     try do
       apply(module, :init, [args])
     catch
@@ -722,22 +820,28 @@ defmodule YProcess do
     else
       {:ok, mod_state} ->
         init_ack(starter)
-        enter_loop(module, mod_state, name, opts, :infinity)
+        state = gen_state(module, mod_state, backend)
+        enter_loop(name, opts, :infinity, state)
       {:ok, mod_state, timeout} ->
         init_ack(starter)
-        enter_loop(module, mod_state, name, opts, timeout)
+        state = gen_state(module, mod_state, backend)
+        enter_loop(name, opts, timeout, state)
       {:create, channels, mod_state} when is_list(channels) ->
         init_ack(starter)
-        enter_create(module, mod_state, channels, name, opts, :infinity)
+        state = gen_state(module, mod_state, backend)
+        enter_create(channels, name, opts, :infinity, state)
       {:create, channels, mod_state, timeout} when is_list(channels) ->
         init_ack(starter)
-        enter_create(module, mod_state, channels, name, opts, timeout)
+        state = gen_state(module, mod_state, backend)
+        enter_create(channels, name, opts, timeout, state)
       {:join, channels, mod_state} when is_list(channels) ->
         init_ack(starter)
-        enter_join(module, mod_state, channels, name, opts, :infinity)
+        state = gen_state(module, mod_state, backend)
+        enter_join(channels, name, opts, :infinity, state)
       {:join, channels, mod_state, timeout} when is_list(channels) ->
         init_ack(starter)
-        enter_join(module, mod_state, channels, name, opts, timeout)
+        state = gen_state(module, mod_state, backend)
+        enter_join(channels, name, opts, timeout, state)
       :ignore ->
         init_stop(starter, name, :ignore)
       {:stop, reason} ->
@@ -751,27 +855,27 @@ defmodule YProcess do
   # Enters the `GenServer` loop.
   #
   # Args:
-  #   * `module` - Module name.
-  #   * `mod_state` - Initial state of the module.
   #   * `name` - Name of the server.
   #   * `opts` - Options.
   #   * `timeout` - Timeout or `:hibernate` flag.
+  #   * `state` - YProcess state.
   @doc false
-  def enter_loop(module, mod_state, name, opts, :hibernate) do
-    args = [module, mod_state, name, opts, :infinity]
+  def enter_loop(name, opts, :hibernate, state) do
+    args = [name, opts, :infinity, state]
     :proc_lib.hibernate(__MODULE__, :enter_loop, args)
   end
 
-  def enter_loop(module, mod_state, name, opts, timeout)
+  def enter_loop(name, opts, timeout, state)
       when name === self() do
-    state = %YProcess{module: module, mod_state: mod_state}
     :gen_server.enter_loop(__MODULE__, opts, state, timeout)
   end
 
-  def enter_loop(module, mod_state, name, opts, timeout) do
-    state = %YProcess{module: module, mod_state: mod_state}
+  def enter_loop(name, opts, timeout, state) do
     :gen_server.enter_loop(__MODULE__, opts, state, name, timeout)
   end
+
+  ################################
+  # GenServer callback definition.
 
   @doc false
   def init(_) do
@@ -780,25 +884,69 @@ defmodule YProcess do
 
   @doc false
   def handle_call(request, from, state) do
-    handle_sync(request, from, state)
+    handle_message(:handle_call, request, from, state)
   end
 
   @doc false
   def handle_cast(request, %YProcess{} = state) do
-    handle_async(:handle_cast, request, state)
+    handle_message(:handle_cast, request, nil, state)
   end
 
   @doc false
+  def handle_info(
+    {@emit_noack_header, channels, message},
+    %YProcess{timeout: nil} = state
+  ) do
+    Backend.emit(state.backend, channels, message, &gen_cast_message/2)
+    {:noreply, state}
+  end
+  def handle_info(
+    {@emit_noack_header, channels, message},
+    %YProcess{timeout: timeout} = state
+  ) do
+    Backend.emit(state.backend, channels, message, &gen_cast_message/2)
+    {:noreply, state, timeout}
+  end
+  def handle_info(
+    {@emit_ack_header, channels, message},
+    %YProcess{timeout: nil} = state
+  ) do
+    Backend.emit(state.backend, channels, message, &gen_call_message/2)
+    {:noreply, state}
+  end
+  def handle_info(
+    {@emit_ack_header, channels, message},
+    %YProcess{timeout: timeout} = state
+  ) do
+    Backend.emit(state.backend, channels, message, &gen_call_message/2)
+    {:noreply, state, timeout}
+  end
+  def handle_info({@cast_header, _, _} = request, %YProcess{} = state) do
+    handle_message(:handle_event, request, nil, state)
+  end
+  def handle_info({@call_header, _, _, _} = request, %YProcess{} = state) do
+    handle_message(:handle_event, request, nil, state)
+  end
+  def handle_info({@ack_header, _, pid, _, _}, %YProcess{timeout: nil} = state)
+      when pid != self() do
+    {:noreply, state}
+  end
+  def handle_info({@ack_header, _, pid, _, _}, %YProcess{timeout: timeout} = state)
+      when pid != self() do
+    {:noreply, state, timeout}
+  end
+  def handle_info({@ack_header, subscriber, _, channel, message}, %YProcess{} = state) do
+    request = {:DELIVERED, subscriber, channel, message}
+    handle_message(:handle_info, request, nil, state)
+  end
   def handle_info(request, %YProcess{} = state) do
-    handle_async(:handle_info, request, state)
+    handle_message(:handle_info, request, nil, state)
   end
 
   @doc false
-  def code_change(old_vsn,
-                  %YProcess{module: module, mod_state: mod_state} = state,
-                  extra) do
+  def code_change(old_vsn, %YProcess{} = state, extra) do
     try do
-      apply(module, :code_change, [old_vsn, mod_state, extra])
+      apply(state.module, :code_change, [old_vsn, state.mod_state, extra])
     catch
       :throw, value ->
         exit({{:nocatch, value}, System.stacktrace()})
@@ -816,8 +964,7 @@ defmodule YProcess do
   end
 
   @doc false
-  def format_status(:normal, [pdict, %YProcess{module: module,
-                                               mod_state: mod_state}]) do
+  def format_status(:normal, [pdict, %YProcess{module: module, mod_state: mod_state}]) do
     try do
       apply(module, :format_status, [:normal, [pdict, mod_state]])
     catch
@@ -827,8 +974,7 @@ defmodule YProcess do
       mod_status -> mod_status
     end
   end
-  def format_status(:terminate, [pdict, %YProcess{module: module,
-                                                 mod_state: mod_state}]) do
+  def format_status(:terminate, [pdict, %YProcess{module: module, mod_state: mod_state}]) do
     try do
       apply(module, :format_status, [:terminate, [pdict, mod_state]])
     catch
@@ -895,82 +1041,81 @@ defmodule YProcess do
 
   ##
   # Enters the `GenServer` loop, but first creates the channels.
-  defp enter_create(module, mod_state, channels, name, opts, timeout) do
+  defp enter_create(channels, name, opts, timeout, %YProcess{} = state) do
     try do
-      create(channels)
+      Backend.create(state.backend, channels)
     catch
       :exit, reason ->
         report = {:EXIT, {reason, System.stacktrace()}}
-        enter_terminate(module, mod_state, name, reason, report)
+        enter_terminate(name, reason, report, state)
       :error, reason ->
         reason = {reason, System.stacktrace()}
-        enter_terminate(module, mod_state, name, reason, {:EXIT, reason})
+        enter_terminate(name, reason, {:EXIT, reason}, state)
       :throw, value ->
         reason = {{:nocatch, value}, System.stacktrace()}
-        enter_terminate(module, mod_state, name, reason, {:EXIT, reason})
+        enter_terminate(name, reason, {:EXIT, reason}, state)
     else
       :ok ->
-        enter_loop(module, mod_state, name, opts, timeout)
+        enter_loop(name, opts, timeout, state)
     end
   end
 
   ##
   # Enters the `GenServer` loop, but first joins the channels.
-  defp enter_join(module, mod_state, channels, name, opts, timeout) do
+  defp enter_join(channels, name, opts, timeout, %YProcess{} = state) do
     try do
-      join(channels)
+      Backend.join(state.backend, channels)
     catch
       :exit, reason ->
         report = {:EXIT, {reason, System.stacktrace()}}
-        enter_terminate(module, mod_state, name, reason, report)
+        enter_terminate(name, reason, report, state)
       :error, reason ->
         reason = {reason, System.stacktrace()}
-        enter_terminate(module, mod_state, name, reason, {:EXIT, reason})
+        enter_terminate(name, reason, {:EXIT, reason}, state)
       :throw, value ->
         reason = {{:nocatch, value}, System.stacktrace()}
-        enter_terminate(module, mod_state, name, reason, {:EXIT, reason})
+        enter_terminate(name, reason, {:EXIT, reason}, state)
     else
       :ok ->
-        enter_loop(module, mod_state, name, opts, timeout)
+        enter_loop(name, opts, timeout, state)
     end
   end
 
   ##
   # Invokes `module.terminate/2` and stops the `GenServer`.
-  @spec enter_terminate(module, mod_state, name, reason, report) ::
+  @spec enter_terminate(name, reason, report, state) ::
     no_return
-      when mod_state: term, name: term, reason: term, report: term
-  defp enter_terminate(module, mod_state, name, reason, report) do
+      when name: term, reason: term, report: term, state: term
+  defp enter_terminate(name, reason, report, %YProcess{} = state) do
     try do
-      apply(module, :terminate, [reason, mod_state])
+      apply(state.module, :terminate, [reason, state.mod_state])
     catch
       :exit, reason ->
         report = {:EXIT, {reason, System.stacktrace()}}
-        enter_stop(module, mod_state, name, reason, report)
+        enter_stop(name, reason, report, state)
       :error, reason ->
         reason = {reason, System.stacktrace()}
-        enter_stop(module, mod_state, name, reason, {:EXIT, reason})
+        enter_stop(name, reason, {:EXIT, reason}, state)
       :throw, value ->
         reason = {{:nocatch, value}, System.stacktrace()}
-        enter_stop(module, mod_state, name, reason, {:EXIT, reason})
+        enter_stop(name, reason, {:EXIT, reason}, state)
     else
       _ ->
-        enter_stop(module, mod_state, name, reason, report)
+        enter_stop(name, reason, report, state)
     end
   end
 
-  @spec enter_stop(module, mod_state, name, reason, report) ::
+  @spec enter_stop(name, reason, report, state) ::
     no_return
-      when mod_state: term, name: term, reason: term, report: term
-  defp enter_stop(_, _, _, :normal, {:EXIT, {{:stop, :normal}, _}}), do:
+      when name: term, reason: term, report: term, state: term
+  defp enter_stop(_, :normal, {:EXIT, {{:stop, :normal}, _}}, _), do:
     exit(:normal)
-  defp enter_stop(_, _, _, :shutdown, {:EXIT, {{:stop, :shutdown}, _}}), do:
+  defp enter_stop(_, :shutdown, {:EXIT, {{:stop, :shutdown}, _}}, _), do:
     exit(:shutdown)
-  defp enter_stop(_, _, _, {:shutdown, _} = shutdown,
-                  {:EXIT, {{:stop, shutdown}, _}}), do:
+  defp enter_stop(_, {:shutdown, _} = shutdown,
+                  {:EXIT, {{:stop, shutdown}, _}}, _), do:
     exit(shutdown)
-  defp enter_stop(module, mod_state, name, reason, {_, report}) do
-    state = %YProcess{module: module, mod_state: mod_state}
+  defp enter_stop(name, reason, {_, report}, state) do
     mod_state = format_status(:terminate, [Process.get(), state])
     format = '**Generic server ~p terminating ~n' ++
       '** Last message in was ~p~n' ++ ## No last message
@@ -999,338 +1144,268 @@ defmodule YProcess do
   defp report_reason(reason), do: reason
 
   #############################################################################
-  # Basic functions helpers.
-
-  ##
-  # Creates the channels.
-  defp create(channels) when is_list(channels) do
-    _ = channels |> Enum.map(&create/1)
-    :ok
-  end
-  defp create(channel) do
-    id = {@channel_header, channel}
-    created? = :ok == :pg2.create(id)
-    if not created?, do: exit({:cannot_create_channel, channel}), else: id
-  end
-
-  ##
-  # Deletes the channels.
-  defp delete(channels) when is_list(channels) do
-    _ = channels |> Enum.map(&delete/1)
-    :ok
-  end
-  defp delete(channel) do
-    id = {@channel_header, channel}
-    :pg2.delete(id)
-  end
-
-  ##
-  # Joins the channels.
-  defp join(channels) when is_list(channels) do
-    _ = channels |> Enum.map(&join/1)
-    :ok
-  end
-  defp join(channel) do
-    id = create(channel)
-    is_subscribed? = id |> :pg2.get_members |> Enum.member?(self())
-    if not is_subscribed? do
-      case :pg2.join(id, self) do
-        :ok -> :ok
-        {:error, _} -> exit({:cannot_join_channel, channel})
-      end
-    else
-      :ok
-    end
-  end
-
-  ##
-  # Leaves the channels.
-  defp leave(channels) when is_list(channels) do
-    _ = channels |> Enum.map(&leave/1)
-    :ok
-  end
-  defp leave(channel) do
-    id = {@channel_header, channel}
-    _ = :pg2.leave(id, self())
-    :ok
-  end
-
-  ##
-  # Emits messages without confirmation.
-  defp emit_noack(channels, message) when is_list(channels) do
-    channels |> Enum.map(&(emit_noack(&1, message)))
-  end
-  defp emit_noack(channel, message) do
-    request = {@event_header, channel, message}
-    {@channel_header, channel}
-     |> :pg2.get_members
-     |> Enum.map(&(YProcess.cast(&1, request)))
-  end
-
-  ##
-  # Emits messages with confirmation.
-  defp emit_ack(channels, message, timeout) when is_list(channels) do
-    channels
-     |> Enum.map(&(emit_ack(&1, message, timeout)))
-  end
-  defp emit_ack(channel, message, timeout) do
-    pid = self()
-    {@channel_header, channel}
-     |> :pg2.get_members
-     |> Enum.map(&(send_message(pid, &1, channel, message, timeout)))
-  end
-
-  ##
-  # Sends a message to a PID.
-  defp send_message(starter, pid, channel, message, timeout) do
-    request = {@event_header, channel, message}
-    try do
-      YProcess.call(pid, request, timeout)
-    catch
-      _, _ -> send starter, {@no_deliver, channel, message, pid}
-    else
-      :ack -> send starter, {@deliver, channel, message, pid}
-      _ -> send starter, {@no_deliver, channel, message, pid}
-    end
-  end
-
-  ##
-  # Naïve emit implementation.
-  defp emit(channels, message) do
-    emit_noack(channels, message)
-  end
-  defp emit(channels, message, timeout) do
-    emit_ack(channels, message, timeout)
-  end
-
-  @doc false
-  def gen_channel_name(channel) do
-    {@channel_header, channel}
-  end
-
-  @doc false
-  def gen_async_message(channel, message) do
-    {@async_header, channel, message}
-  end
-
-  @doc false
-  def gen_sync_message(channel, message) do
-    from = {self(), make_ref()}
-    {@sync_header, channel, message, from}
-  end
-
-  #############################################################################
   # GenServer helpers.
 
+  defp gen_cast_message(channel, message) do
+    {@cast_header, channel, message}
+  end
+
+  defp gen_call_message(channel, message) do
+    from = self()
+    {@call_header, channel, message, from}
+  end
+
   ##
-  # Handles synchronous events.
+  # Acks a message.
   #
   # Args:
-  #   * `request` - Request.
-  #   * `from` - Process that sent the event.
-  #   * `state` - `YProcess` state.
-  defp handle_sync({@event_header, channel, message}, from,
-                   %YProcess{module: module, mod_state: mod_state} = state) do
-    try do
-      apply(module, :handle_event, [channel, message, mod_state])
-    catch
-      :throw, value ->
-        reply(from, :noack)
-        :erlang.raise(:error, {:nocatch, value}, System.stacktrace())
-    else
-      {:noreply, mod_state} ->
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:noreply, mod_state, timeout} ->
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:create, channels, mod_state} when is_list(channels) ->
-        _ = create(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:create, channels, mod_state, timeout} ->
-        _ = create(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:delete, channels, mod_state} when is_list(channels) ->
-        _ = delete(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:delete, channels, mod_state, timeout} ->
-        _ = delete(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:join, channels, mod_state} when is_list(channels) ->
-        _ = join(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:join, channels, mod_state, timeout} when is_list(channels) ->
-        _ = join(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:leave, channels, mod_state} when is_list(channels) ->
-        _ = leave(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:leave, channels, mod_state, timeout} ->
-        _ = leave(channels)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:emit, channels, message, mod_state} ->
-        _ = emit(channels, message)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:emit, channels, message, mod_state, timeout} ->
-        _ = emit(channels, message)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:emit_ack, channels, message, ack_timeout, mod_state}
-          when is_integer(ack_timeout) ->
-        _ = emit(channels, message, ack_timeout)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}}
-      {:emit_ack, channels, message, ack_timeout, mod_state, timeout}
-          when is_integer(ack_timeout) ->
-        _ = emit(channels, message, ack_timeout)
-        {:reply, :ack, %YProcess{state | mod_state: mod_state}, timeout}
-      {:stop, :normal, mod_state} ->
-        {:stop, :ack, :normal, %YProcess{state | mod_state: mod_state}}
-      {:stop, :shutdown, mod_state} ->
-        {:stop, :ack, :shutdown, %YProcess{state | mod_state: mod_state}}
-      {:stop, {:shutdown, _} = shutdown, mod_state} ->
-        {:stop, :ack, shutdown, %YProcess{state | mod_state: mod_state}}
-      {:stop, reason, mod_state} ->
-        {:stop, :noack, reason, %YProcess{state | mod_state: mod_state}}
-      other ->
-        {:stop, {:bad_return_value, other}, state}
-    end
+  #   * `receiver_pid` - Receiver PID.
+  #   * `from` - Connection reference.
+  defp send_ack_message(receiver_pid, sender_pid, channel, message) do
+    ack = {@ack_header, receiver_pid, sender_pid, channel, message}
+    send sender_pid, ack
   end
-  defp handle_sync(request, from,
-                   %YProcess{module: module, mod_state: mod_state} = state) do
-    try do
-      apply(module, :handle_call, [request, from, mod_state])
-    catch
-      :throw, value ->
-        :erlang.raise(:error, {:nocatch, value}, System.stacktrace())
-    else
-      {:noreply, mod_state} ->
-        {:noreply, %YProcess{state | mod_state: mod_state}}
-      {:noreply, mod_state, timeout} ->
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:reply, reply, mod_state} ->
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:reply, reply, mod_state, timeout} ->
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:create, channels, reply, mod_state} when is_list(channels) ->
-        _ = create(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:create, channels, reply, mod_state, timeout} ->
-        _ = create(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:delete, channels, reply, mod_state} when is_list(channels) ->
-        _ = delete(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:delete, channels, reply, mod_state, timeout} ->
-        _ = delete(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:join, channels, reply, mod_state} when is_list(channels) ->
-        _ = join(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:join, channels, reply, mod_state, timeout} when is_list(channels) ->
-        _ = join(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:leave, channels, reply, mod_state} when is_list(channels) ->
-        _ = leave(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:leave, channels, reply, mod_state, timeout} ->
-        _ = leave(channels)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:emit, channels, message, reply, mod_state} ->
-        _ = emit(channels, message)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:emit, channels, message, reply, mod_state, timeout} ->
-        _ = emit(channels, message)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:emit_ack, channels, message, ack_timeout, reply, mod_state}
-          when is_integer(ack_timeout) ->
-        _ = emit(channels, message, ack_timeout)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}}
-      {:emit_ack, channels, message, ack_timeout, reply, mod_state, timeout}
-          when is_integer(ack_timeout) ->
-        _ = emit(channels, message, ack_timeout)
-        {:reply, reply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:stop, reason, reply, mod_state} ->
-        {:stop, reply, reason, %YProcess{state | mod_state: mod_state}}
-      other ->
-        {:stop, {:bad_return_value, other}, state}
-    end
 
+  ##
+  # Emit ack message.
+  #
+  # Args:
+  #   * `sender_pid` - Sender PID.
+  defp emit_ack_message(sender_pid, channels, message) do
+    emit_ack = {@emit_ack_header, channels, message}
+    send sender_pid, emit_ack
+  end
+
+  ##
+  # Emit no ack message.
+  #
+  # Args:
+  #   * `sender_pid` - Sender PID.
+  defp emit_noack_message(sender_pid, channels, message) do
+    emit_noack = {@emit_noack_header, channels, message}
+    send sender_pid, emit_noack
+  end
+
+  ##
+  # Handles requests.
+  #
+  # Args:
+  #   * `callback` - Callback name.
+  #   * `request` - Request message
+  #   * `from` - Reference to the process which sent the request.
+  #   * `state` - YProcess state.
+  #
+  # Returns:
+  #   `GenServer` response.
+  defp handle_message(:handle_event, {@call_header, channel, message, from},
+                      nil, %YProcess{} = state) do
+    handle_async(fn ->
+      send_ack_message(self(), from, channel, message)
+      apply(state.module, :handle_event, [channel, message, state.mod_state])
+    end, state)
+  end
+  defp handle_message(:handle_event, {@cast_header, channel, message},
+                      nil, %YProcess{} = state) do
+    handle_async(fn ->
+      apply(state.module, :handle_event, [channel, message, state.mod_state])
+    end, state)
+  end
+  defp handle_message(callback, request, nil, %YProcess{} = state) do
+    handle_sync(fn ->
+      apply(state.module, callback, [request, state.mod_state])
+    end, state)
+  end
+  defp handle_message(callback, request, from, %YProcess{} = state) do
+    handle_sync(fn ->
+      apply(state.module, callback, [request, from, state.mod_state])
+    end, state)
   end
 
   ##
   # Handles asynchronous requests.
   #
   # Args:
-  #   * `callback` - Type. Either `:handle_cast` or `:handle_info`.
-  #   * `request` - Request.
+  #   * `function` - Function to handle the message as `YProcess`.
   #   * `state` - `YProcess` state.
-  defp handle_async(callback, request, %YProcess{} = state) do
+  #
+  # Returns:
+  #   `GenServer` response.
+  defp handle_async(function, %YProcess{} = state) do
     try do
-      async_event(callback, request, state)
+      function.()
     catch
       :throw, value ->
         :erlang.raise(:error, {:nocatch, value}, System.stacktrace())
     else
-      {:noreply, mod_state} = noreply ->
-        _ = put_elem(noreply, 1, %YProcess{state | mod_state: mod_state})
-      {:noreply, mod_state, _} = noreply ->
-        _ = put_elem(noreply, 1, %YProcess{state | mod_state: mod_state})
-      {:create, channels, mod_state} when is_list(channels) ->
-        _ = create(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}}
+      response ->
+        cast_response(response, state)
+    end
+  end
+
+  ##
+  # Handles synchronous requests.
+  #
+  # Args:
+  #   * `function` - Function to handle the message as `YProcess`.
+  #   * `state` - `YProcess` state.
+  #
+  # Returns:
+  #   `GenServer` response.
+  defp handle_sync(function, %YProcess{} = state) do
+    try do
+      function.()
+    catch
+      :throw, value ->
+        :erlang.raise(:error, {:nocatch, value}, System.stacktrace())
+    else
+      response ->
+        call_response(response, state)
+    end
+  end
+
+  ##
+  # Handles asynchronous responses.
+  #
+  # Args:
+  #   * `response` - Response from `YProcess` callbacks.
+  #   * `state` - `YProcess` state.
+  #
+  # Returns:
+  #   `GenServer` response.
+  defp cast_response(response, %YProcess{backend: backend} = state) do
+    case response do
+      {:noreply, mod_state} ->
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
+      {:noreply, mod_state, timeout} ->
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
+      {:create, channels, mod_state} ->
+        _ = Backend.create(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
       {:create, channels, mod_state, timeout} ->
-        _ = create(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:delete, channels, mod_state} when is_list(channels) ->
-        _ = delete(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}}
+        _ = Backend.create(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
+      {:delete, channels, mod_state} ->
+        _ = Backend.delete(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
       {:delete, channels, mod_state, timeout} ->
-        _ = delete(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
+        _ = Backend.delete(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
       {:join, channels, mod_state} ->
-        _ = join(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}}
+        _ = Backend.join(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
       {:join, channels, mod_state, timeout} ->
-        _ = join(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
+        _ = Backend.join(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
       {:leave, channels, mod_state} ->
-        _ = leave(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}}
+        _ = Backend.leave(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
       {:leave, channels, mod_state, timeout} ->
-        _ = leave(channels)
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
+        _ = Backend.leave(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
       {:emit, channels, message, mod_state} ->
-        _ = emit(channels, message)
-        {:noreply, %YProcess{state | mod_state: mod_state}}
+        _ = emit_noack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
       {:emit, channels, message, mod_state, timeout} ->
-        _ = emit(channels, message)
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:emit_ack, channels, message, ack_timeout, mod_state}
-          when is_integer(ack_timeout) ->
-        _ = emit(channels, message, ack_timeout)
-        {:noreply, %YProcess{state | mod_state: mod_state}}
-      {:emit_ack, channels, message, ack_timeout, mod_state, timeout}
-          when is_integer(ack_timeout) ->
-        _ = emit(channels, message, ack_timeout)
-        {:noreply, %YProcess{state | mod_state: mod_state}, timeout}
-      {:stop, _, mod_state} = stop ->
-        _ = put_elem(stop, 2, %YProcess{state | mod_state: mod_state})
+        _ = emit_noack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
+      {:emit_ack, channels, message, mod_state} ->
+        _ = emit_ack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:noreply, new_state}
+      {:emit_ack, channels, message, mod_state, timeout} ->
+        _ = emit_ack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:noreply, new_state, timeout}
+      {:stop, reason, mod_state} ->
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:stop, reason, new_state}
       other ->
         {:stop, {:bad_return_value, other}, state}
     end
   end
 
   ##
-  # Handles asynchronous events.
+  # Handles synchronous responses.
   #
   # Args:
-  #   * `callback` - Callback to call.
-  #   * `message` - Message.
+  #   * `response` - Response from `YProcess` callbacks.
   #   * `state` - `YProcess` state.
-  defp async_event(_,
-                   {@event_header, channel, message},
-                   %YProcess{module: module, mod_state: mod_state}) do
-    apply(module, :handle_event, [channel, message, mod_state])
-  end
-  defp async_event(callback, request,
-                   %YProcess{module: module, mod_state: mod_state}) do
-    apply(module, callback, [request, mod_state])
+  #
+  # Returns:
+  #   `GenServer` response.
+  defp call_response(response, %YProcess{backend: backend} = state) do
+    case response do
+      {:reply, reply, mod_state} ->
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:reply, reply, mod_state, timeout} ->
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:rcreate, channels, reply, mod_state} ->
+        _ = Backend.create(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:rcreate, channels, reply, mod_state, timeout} ->
+        _ = Backend.create(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:rdelete, channels, reply, mod_state} ->
+        _ = Backend.delete(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:rdelete, channels, reply, mod_state, timeout} ->
+        _ = Backend.delete(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:rjoin, channels, reply, mod_state} ->
+        _ = Backend.join(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:rjoin, channels, reply, mod_state, timeout} ->
+        _ = Backend.join(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:rleave, channels, reply, mod_state} ->
+        _ = Backend.leave(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:rleave, channels, reply, mod_state, timeout} ->
+        _ = Backend.leave(backend, channels)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:remit, channels, message, reply, mod_state} ->
+        _ = emit_noack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:remit, channels, message, reply, mod_state, timeout} ->
+        _ = emit_noack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:remit_ack, channels, message, reply, mod_state} ->
+        _ = emit_ack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:reply, reply, new_state}
+      {:remit_ack, channels, message, reply, mod_state, timeout} ->
+        _ = emit_ack_message(self(), channels, message)
+        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+        {:reply, reply, new_state, timeout}
+      {:stop, reason, reply, mod_state} ->
+        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+        {:stop, reason, reply, new_state}
+      other ->
+        cast_response(other, state)
+    end
   end
 end

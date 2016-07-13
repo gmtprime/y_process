@@ -11,56 +11,60 @@ This project is heavily inspired by
 
 ## Solution using `:pg2`
 
-    defmodule Consumer do
-      def subscribe(channel, callback) do
-        :pg2.join(channel, self)
-        loop(channel, callback)
-      end
+```elixir
+defmodule Consumer do
+  def subscribe(channel, callback) do
+    :pg2.join(channel, self)
+    loop(channel, callback)
+  end
 
-      defp loop(channel, callback) do
-        receive do
-          :stop -> :stopped
-          message ->
-            try do
-              callback.(message)
-            catch
-              _, _ -> :stopped
-            else
-             :ok -> loop(channel, callback)
-             :stop -> :stopped
-            end
+  defp loop(channel, callback) do
+    receive do
+      :stop -> :stopped
+      message ->
+        try do
+          callback.(message)
+        catch
+          _, _ -> :stopped
+        else
+         :ok -> loop(channel, callback)
+         :stop -> :stopped
         end
-      end
     end
+  end
+end
 
-    defmodule Publisher do
-      def create(channel) do
-        :pg2.create(channel)
-      end
+defmodule Publisher do
+  def create(channel) do
+    :pg2.create(channel)
+  end
 
-      def publish(channel, message) do
-        channel
-         |> :pg2.get_members
-         |> Enum.map(&(send(&1, message)))
-        :ok
-      end
-    end
+  def publish(channel, message) do
+    channel
+     |> :pg2.get_members
+     |> Enum.map(&(send(&1, message)))
+    :ok
+  end
+end
+```
 
 When testing this modules in `iex`:
 
-    iex(1)> Publisher.create("channel")
-    :ok
-    iex(2)> callback = fn message -> IO.inspect {self, message} end
-    #Function<6.54118792/1 in :erl_eval.expr/5>
-    iex(3)> spawn fn -> Consumer.subscribe("channel", callback) end
-    #PID<0.168.0>
-    iex(4)> spawn fn -> Consumer.subscribe("channel", callback) end
-    #PID<0.170.0>
-    iex(5)> Publisher.publish("channel", "hello")
-    {#PID<0.168.0>, "hello"}
-    {#PID<0.170.0>, "hello"}
-    :ok
-    iex(6)>
+```elixir
+iex(1)> Publisher.create("channel")
+:ok
+iex(2)> callback = fn message -> IO.inspect {self, message} end
+#Function<6.54118792/1 in :erl_eval.expr/5>
+iex(3)> spawn fn -> Consumer.subscribe("channel", callback) end
+#PID<0.168.0>
+iex(4)> spawn fn -> Consumer.subscribe("channel", callback) end
+#PID<0.170.0>
+iex(5)> Publisher.publish("channel", "hello")
+{#PID<0.168.0>, "hello"}
+{#PID<0.170.0>, "hello"}
+:ok
+iex(6)>
+```
 
 If we wrap this around a `GenServer` we would have a better way to handle
 messages in the `Consumers`. Depending on the approach, the messages could be
@@ -85,77 +89,83 @@ Let's define a `Producer` that every second generates a number between 1 and
 
 So the `Producer` is as follows:
 
-    defmodule Producer do
-      use YProcess
+```elixir
+defmodule Producer do
+  use YProcess
 
-      def start_link(channel) do
-        YProcess.start_link(__MODULE__, channel)
-      end
+  def start_link(channel) do
+    YProcess.start_link(__MODULE__, channel)
+  end
 
-      def stop(producer) do
-        YProcess.stop(producer)
-      end
+  def stop(producer) do
+    YProcess.stop(producer)
+  end
 
-      defp get_number do
-        (:random.uniform * 10) |> :erlang.trunc
-      end
+  defp get_number do
+    (:random.uniform * 10) |> :erlang.trunc
+  end
 
-      def init(channel) do
-        _ = :os.system_time(:seconds) |> :random.seed
-        {:create, [channel], [channel], 1000}
-      end
+  def init(channel) do
+    _ = :os.system_time(:seconds) |> :random.seed
+    {:create, [channel], [channel], 1000}
+  end
 
-      def handle_info(:timeout, channels) do
-        number = get_number
-        {:emit, channels, number, channels, 1000}
-      end
-    end
+  def handle_info(:timeout, channels) do
+    number = get_number
+    {:emit, channels, number, channels, 1000}
+  end
+end
+```
 
 And the `Consumer` is as follows:
 
-    defmodule Consumer do
-      use YProcess
+```elixir
+defmodule Consumer do
+  use YProcess
 
-      def start_link(:channel) do
-        YProcess.start_link(__MODULE__, :channel)
-      end
+  def start_link(:channel) do
+    YProcess.start_link(__MODULE__, :channel)
+  end
 
-      def stop(consumer) do
-        YProcess.stop(consumer)
-      end
+  def stop(consumer) do
+    YProcess.stop(consumer)
+  end
 
-      def init(channel) do
-        {:join, [channel], channel}
-      end
+  def init(channel) do
+    {:join, [channel], channel}
+  end
 
-      def handle_event(channel, number, channel) when is_integer(number) do
-        IO.puts inspect {self, number}
-        {:noreply, channel}
-      end
+  def handle_event(channel, number, channel) when is_integer(number) do
+    IO.puts inspect {self, number}
+    {:noreply, channel}
+  end
     end
+```
 
 So when we start a `Producer` and several `Consumer`s we would have the
 following output:
 
-    iex(1)> {:ok, producer} = Producer.start_link(:channel)
-    {:ok, #PID<0.189.0>}
-    iex(2)> {:ok, consumer0} = Consumer.start_link(:channel)
-    {:ok, #PID<0.192.0>}
-    {#PID<0.192.0>, 7}
-    {#PID<0.192.0>, 8}
-    iex(3)> {:ok, consumer1} = Consumer.start_link(:channel)
-    {:ok, #PID<0.194.0>}
-    {#PID<0.192.0>, 0}
-    {#PID<0.194.0>, 0}
-    {#PID<0.192.0>, 2}
-    {#PID<0.194.0>, 2}
-    {#PID<0.192.0>, 7}
-    {#PID<0.194.0>, 7}
-    iex(4)> Consumer.stop(consumer0)
-    {#PID<0.194.0>, 2}
-    {#PID<0.194.0>, 6}
-    {#PID<0.194.0>, 1}
-    iex(5)>
+```elixir
+iex(1)> {:ok, producer} = Producer.start_link(:channel)
+{:ok, #PID<0.189.0>}
+iex(2)> {:ok, consumer0} = Consumer.start_link(:channel)
+{:ok, #PID<0.192.0>}
+{#PID<0.192.0>, 7}
+{#PID<0.192.0>, 8}
+iex(3)> {:ok, consumer1} = Consumer.start_link(:channel)
+{:ok, #PID<0.194.0>}
+{#PID<0.192.0>, 0}
+{#PID<0.194.0>, 0}
+{#PID<0.192.0>, 2}
+{#PID<0.194.0>, 2}
+{#PID<0.192.0>, 7}
+{#PID<0.194.0>, 7}
+iex(4)> Consumer.stop(consumer0)
+{#PID<0.194.0>, 2}
+{#PID<0.194.0>, 6}
+{#PID<0.194.0>, 1}
+iex(5)>
+```
 
 ## Backends
 
@@ -167,33 +177,37 @@ its adapters.
 
 The backend behaviour needs to implement the following callbacks:
 
-    # Callback to create a `channel`.
-    @callback create(channel) :: :ok | {:error, reason}
-      when channel: YProcess.channel, reason: term
+```elixir
+# Callback to create a `channel`.
+@callback create(channel) :: :ok | {:error, reason}
+  when channel: YProcess.channel, reason: term
 
-    # Callback to delete a `channel`.
-    @callback delete(channel) :: :ok | {:error, reason}
-      when channel: YProcess.channel, reason: term
+# Callback to delete a `channel`.
+@callback delete(channel) :: :ok | {:error, reason}
+  when channel: YProcess.channel, reason: term
 
-    # Callback used to make a process with `pid` a `channel`.
-    @callback join(channel, pid) :: :ok | {:error, reason}
-      when channel: YProcess.channel, reason: term
+# Callback used to make a process with `pid` a `channel`.
+@callback join(channel, pid) :: :ok | {:error, reason}
+  when channel: YProcess.channel, reason: term
 
-    # Callback used to make a process with `pid` leave a `channel`.
-    @callback leave(channel, pid) :: :ok | {:error, reason}
-      when channel: YProcess.channel, reason: term
+# Callback used to make a process with `pid` leave a `channel`.
+@callback leave(channel, pid) :: :ok | {:error, reason}
+  when channel: YProcess.channel, reason: term
 
-    # Callback used to send a `message` to a `channel`.
-    @callback emit(channel, message) :: :ok | {:error, reason}
-      when channel: YProcess.channel, message: term, reason: term
+# Callback used to send a `message` to a `channel`.
+@callback emit(channel, message) :: :ok | {:error, reason}
+  when channel: YProcess.channel, message: term, reason: term
+```
 
 To use a backend, just modify the configuration of the application (explained in
 the next sections) or pass the backend in the module definition i.e:
 
-    defmodule Test do
-      use YProcess, backend: YProcess.Backend.PhoenixPubSub
-      (...)
-    end
+```elixir
+defmodule Test do
+  use YProcess, backend: YProcess.Backend.PhoenixPubSub
+  (...)
+end
+```
 
 For the backends provided, there are two aliases for the modules:
   
@@ -202,10 +216,12 @@ For the backends provided, there are two aliases for the modules:
 
 The shorter version of the module `Test` defined above would be:
 
-    defmodule Test do
-      use YProcess, backend: :phoenix_pub_sub
-      (...)
-    end
+```elixir
+defmodule Test do
+  use YProcess, backend: :phoenix_pub_sub
+  (...)
+end
+```
 
 ### Backend Configuration
 
@@ -213,35 +229,47 @@ To configure the backend globally for all the `YProcess`es just set the followin
 
 * For `YProcess.Backend.PG2`
 
-        config :y_process,
-          backend: YProces.Backend.PG2
+   ```elixir
+   use Mix.Config
+    
+    config :y_process,
+      backend: YProces.Backend.PG2
+    ```
 
 * For `YProcess.Backend.PhoenixPubSub`
+    
+    ```elixir
+    use Mix.Config
+    
+    config :y_process,
+      backend: YProcess.Backend.PhoenixPubSub
+      opts: [app_name: MyApp.Endpoint]
 
-        config :y_process,
-          backend: YProcess.Backend.PhoenixPubSub
-          opts: [app_name: MyApp.Endpoint]
-
-        # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
-        # for more information.
-        config :my_app, MyApp.Endpoint,
-          pubsub: [adapter: Phoenix.PubSub.PG2,
-                   pool_size: 1,
-                   name: MyApp.PubSub]
-
-where `:my_app` is the name of the application. 
+    # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
+    # for more information.
+    config :my_app, MyApp.Endpoint,
+      pubsub: [adapter: Phoenix.PubSub.PG2,
+               pool_size: 1,
+               name: MyApp.PubSub]
+    ```
+    
+    where `:my_app` is the name of the application. 
 
 ## Installation
 
 Add `YProcess` as a dependency in your `mix.exs` file.
 
-    def deps do
-        [{:y_process, "~> 0.0.2"}]
-    end
+```elixir
+def deps do
+    [{:y_process, "~> 0.1.0"}]
+end
+```
 
 After you're done, run this in your shell to fetch the new dependency:
 
-    $ mix deps.get
+```sh
+$ mix deps.get
+```
 
 ## Author
 

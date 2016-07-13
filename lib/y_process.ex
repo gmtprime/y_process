@@ -159,8 +159,8 @@ defmodule YProcess do
 
   ## Backends
 
-  The backend behaviour defines the way the processes create, delete, join, leave
-  channels and emit messages. By default, the processes use the
+  The backend behaviour defines the way the processes create, delete, join,
+  leave channels and emit messages. By default, the processes use the
   `YProcess.Backend.PG2` backend that uses `:pg2`, but it is possible to use the
   `YProcess.Backend.PhoenixPubSub` that uses phoenix pubsub and also use any of
   its adapters.
@@ -187,16 +187,16 @@ defmodule YProcess do
       @callback emit(channel, message) :: :ok | {:error, reason}
         when channel: YProcess.channel, message: term, reason: term
 
-  To use a backend, just modify the configuration of the application (explained in
-  the next sections) or pass the backend in the module definition i.e:
+  To use a backend, just modify the configuration of the application (explained
+  in the next sections) or pass the backend in the module definition i.e:
 
       defmodule Test do
-        use YProcess, backend: YProcess.Backend.PhoenixPubSub
+        use YProcess, backend: Backend.PhoenixPubSub
         (...)
       end
 
   For the backends provided, there are two aliases for the modules:
-    
+
   * `:pg2` for `YProcess.Backend.PG2`
   * `:phoenix_pub_sub` for `YProcess.Backend.PhoenixPubSub`
 
@@ -209,7 +209,8 @@ defmodule YProcess do
 
   ### Backend Configuration
 
-  To configure the backend globally for all the `YProcess`es just set the following:
+  To configure the backend globally for all the `YProcess`es just set the
+  following:
 
   * For `YProcess.Backend.PG2`
 
@@ -219,7 +220,7 @@ defmodule YProcess do
   * For `YProcess.Backend.PhoenixPubSub`
 
           config :y_process,
-            backend: YProcess.Backend.PhoenixPubSub
+            backend: Backend.PhoenixPubSub
             opts: [app_name: MyApp.Endpoint]
 
           # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
@@ -229,7 +230,7 @@ defmodule YProcess do
                      pool_size: 1,
                      name: MyApp.PubSub]
 
-  where `:my_app` is the name of the application. 
+  where `:my_app` is the name of the application.
 
   ## Installation
 
@@ -247,6 +248,7 @@ defmodule YProcess do
   use Behaviour
   @behaviour :gen_server
   alias __MODULE__, as: YProcess
+  alias YProcess.Backend
 
   ##########
   # Headers.
@@ -302,7 +304,8 @@ defmodule YProcess do
     {:remit, channels, new_message, reply, new_state} |
     {:remit, channels, new_message, reply, new_state, timeout | :hibernate} |
     {:remit_ack, channels, new_message, reply, new_state} |
-    {:remit_ack, channels, new_message, reply, new_state, timeout | :hibernate} |
+    {:remit_ack, channels, new_message, reply, new_state,
+     timeout | :hibernate} |
     {:rjoin, channels, reply, new_state} |
     {:rjoin, channels, reply, new_state, timeout | :hibernate} |
     {:rleave, channels, reply, new_state} |
@@ -312,7 +315,7 @@ defmodule YProcess do
     {:stop, reason :: term, reply, new_state} |
     async_response
 
-  
+
   ############
   # Callbacks.
 
@@ -375,7 +378,7 @@ defmodule YProcess do
   `{:error, reason}` and the process to exit with `reason` without entering the
   loop or calling `terminate/2`
   """
-  @callback init(args :: term) :: 
+  @callback init(args :: term) ::
     {:ok, state} |
     {:ok, state, timeout | :hibernate} |
     {:create, channels, state} |
@@ -440,7 +443,8 @@ defmodule YProcess do
   `message` in several `channels` while replying back to the `call/3` caller.
   The `YProcess` does not receive confirmations for the messages sent.
 
-  Returning `{:remit, channels, message, reply, new_state, timeout | :hibernate}`
+  Returning
+  `{:remit, channels, message, reply, new_state, timeout | :hibernate}`
   is similar to `{:remit, channels, message, new_state}` except a timeout
   or hibernation occurs as with the `:reply` tuple.
 
@@ -450,7 +454,8 @@ defmodule YProcess do
   subscriber in `handle_info/2`. The confirmation message is
   `{:DELIVER, pid, channel, message}` where `pid` is the PID of the subscriber.
 
-  Returning `{:remit_ack, channels, message, reply, new_state, timeout | :hibernate}`
+  Returning
+  `{:remit_ack, channels, message, reply, new_state, timeout | :hibernate}`
   is similar to `{:remit_ack, channels, message, reply, new_state}`
   except a timeout or hibernation occurs as with the `:reply` tuple.
 
@@ -630,10 +635,10 @@ defmodule YProcess do
   def get_backend(backend) do
     case backend do
       nil ->
-        Application.get_env(:y_process, :backend, YProcess.Backend.PG2)
-         |> get_backend
-      :pg2 -> YProcess.Backend.PG2
-      :phoenix_pubsub -> YProcess.Backend.PhoenixPubSub
+        value = Application.get_env(:y_process, :backend, Backend.PG2)
+        get_backend(value)
+      :pg2 -> Backend.PG2
+      :phoenix_pubsub -> Backend.PhoenixPubSub
       other -> other
     end
   end
@@ -892,28 +897,28 @@ defmodule YProcess do
     {@emit_noack_header, channels, message},
     %YProcess{timeout: nil} = state
   ) do
-    YProcess.Backend.emit(state.backend, channels, message, &gen_cast_message/2)
+    Backend.emit(state.backend, channels, message, &gen_cast_message/2)
     {:noreply, state}
   end
   def handle_info(
     {@emit_noack_header, channels, message},
     %YProcess{timeout: timeout} = state
   ) do
-    YProcess.Backend.emit(state.backend, channels, message, &gen_cast_message/2)
+    Backend.emit(state.backend, channels, message, &gen_cast_message/2)
     {:noreply, state, timeout}
   end
   def handle_info(
     {@emit_ack_header, channels, message},
     %YProcess{timeout: nil} = state
   ) do
-    YProcess.Backend.emit(state.backend, channels, message, &gen_call_message/2)
+    Backend.emit(state.backend, channels, message, &gen_call_message/2)
     {:noreply, state}
   end
   def handle_info(
     {@emit_ack_header, channels, message},
     %YProcess{timeout: timeout} = state
   ) do
-    YProcess.Backend.emit(state.backend, channels, message, &gen_call_message/2)
+    Backend.emit(state.backend, channels, message, &gen_call_message/2)
     {:noreply, state, timeout}
   end
   def handle_info({@cast_header, _, _} = request, %YProcess{} = state) do
@@ -1038,7 +1043,7 @@ defmodule YProcess do
   # Enters the `GenServer` loop, but first creates the channels.
   defp enter_create(channels, name, opts, timeout, %YProcess{} = state) do
     try do
-      YProcess.Backend.create(state.backend, channels)
+      Backend.create(state.backend, channels)
     catch
       :exit, reason ->
         report = {:EXIT, {reason, System.stacktrace()}}
@@ -1059,7 +1064,7 @@ defmodule YProcess do
   # Enters the `GenServer` loop, but first joins the channels.
   defp enter_join(channels, name, opts, timeout, %YProcess{} = state) do
     try do
-      YProcess.Backend.join(state.backend, channels)
+      Backend.join(state.backend, channels)
     catch
       :exit, reason ->
         report = {:EXIT, {reason, System.stacktrace()}}
@@ -1276,35 +1281,35 @@ defmodule YProcess do
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:noreply, new_state, timeout}
       {:create, channels, mod_state} ->
-        _ = YProcess.Backend.create(backend, channels)
+        _ = Backend.create(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:noreply, new_state}
       {:create, channels, mod_state, timeout} ->
-        _ = YProcess.Backend.create(backend, channels)
+        _ = Backend.create(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:noreply, new_state, timeout}
       {:delete, channels, mod_state} ->
-        _ = YProcess.Backend.delete(backend, channels)
+        _ = Backend.delete(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:noreply, new_state}
       {:delete, channels, mod_state, timeout} ->
-        _ = YProcess.Backend.delete(backend, channels)
+        _ = Backend.delete(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:noreply, new_state, timeout}
       {:join, channels, mod_state} ->
-        _ = YProcess.Backend.join(backend, channels)
+        _ = Backend.join(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:noreply, new_state}
       {:join, channels, mod_state, timeout} ->
-        _ = YProcess.Backend.join(backend, channels)
+        _ = Backend.join(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:noreply, new_state, timeout}
       {:leave, channels, mod_state} ->
-        _ = YProcess.Backend.leave(backend, channels)
+        _ = Backend.leave(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:noreply, new_state}
       {:leave, channels, mod_state, timeout} ->
-        _ = YProcess.Backend.leave(backend, channels)
+        _ = Backend.leave(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:noreply, new_state, timeout}
       {:emit, channels, message, mod_state} ->
@@ -1349,35 +1354,35 @@ defmodule YProcess do
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:reply, reply, new_state, timeout}
       {:rcreate, channels, reply, mod_state} ->
-        _ = YProcess.Backend.create(backend, channels)
+        _ = Backend.create(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:reply, reply, new_state}
       {:rcreate, channels, reply, mod_state, timeout} ->
-        _ = YProcess.Backend.create(backend, channels)
+        _ = Backend.create(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:reply, reply, new_state, timeout}
       {:rdelete, channels, reply, mod_state} ->
-        _ = YProcess.Backend.delete(backend, channels)
+        _ = Backend.delete(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:reply, reply, new_state}
       {:rdelete, channels, reply, mod_state, timeout} ->
-        _ = YProcess.Backend.delete(backend, channels)
+        _ = Backend.delete(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:reply, reply, new_state, timeout}
       {:rjoin, channels, reply, mod_state} ->
-        _ = YProcess.Backend.join(backend, channels)
+        _ = Backend.join(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:reply, reply, new_state}
       {:rjoin, channels, reply, mod_state, timeout} ->
-        _ = YProcess.Backend.join(backend, channels)
+        _ = Backend.join(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:reply, reply, new_state, timeout}
       {:rleave, channels, reply, mod_state} ->
-        _ = YProcess.Backend.leave(backend, channels)
+        _ = Backend.leave(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
         {:reply, reply, new_state}
       {:rleave, channels, reply, mod_state, timeout} ->
-        _ = YProcess.Backend.leave(backend, channels)
+        _ = Backend.leave(backend, channels)
         new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
         {:reply, reply, new_state, timeout}
       {:remit, channels, message, reply, mod_state} ->

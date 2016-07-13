@@ -109,7 +109,12 @@ defmodule YProcess.Backend do
 
   @doc """
   Emits messages. Uses a backend `module` to send a `message` to a list of
-  `channels`.
+  `channels`. Also uses a function `transform/2` that receives the `channel`
+  and the `message` to make modifications to the `message` before sending it.
+
+  If it fails to send the `message` to any of the channels, sends an exit
+  signal to the calling process. If no error is found while sending the
+  `message` to any of the `channels` return `:ok`.
   """
   @spec emit(module, channels, message, (channel, message -> term)) ::
     :ok | :no_return

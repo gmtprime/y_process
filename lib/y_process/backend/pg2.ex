@@ -8,10 +8,7 @@ defmodule YProcess.Backend.PG2 do
   Creates a `channel` in `:pg2`.
   """
   def create(channel) do
-    case :pg2.create(channel) do
-      :ok -> :ok
-      _ -> {:error, {"Cannot create channel", channel}}
-    end
+    :pg2.create(channel)
   end
 
   @doc """
@@ -25,13 +22,9 @@ defmodule YProcess.Backend.PG2 do
   The process with the `pid` joins a `channel` in `:pg2`.
   """
   def join(channel, pid) do
-    case create(channel) do
-      :ok ->
-        is_subscribed? = channel |> :pg2.get_members |> Enum.member?(pid)
-        if is_subscribed?, do: :ok, else: do_join(channel, pid)
-      error ->
-        error
-    end
+    create(channel)
+    is_subscribed? = channel |> :pg2.get_members |> Enum.member?(pid)
+    if is_subscribed?, do: :ok, else: do_join(channel, pid)
   end
 
   ##
@@ -56,7 +49,7 @@ defmodule YProcess.Backend.PG2 do
   Emits a `message` in a `channel`.
   """
   def emit(channel, message) do
-    channel
+    _ = channel
      |> :pg2.get_members
      |> Enum.map(&(spawn(fn -> send &1, message end)))
     :ok

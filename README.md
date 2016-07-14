@@ -48,7 +48,7 @@ defmodule Publisher do
 end
 ```
 
-When testing this modules in `iex`:
+When testing these modules in `iex`:
 
 ```elixir
 iex(1)> Publisher.create("channel")
@@ -101,17 +101,13 @@ defmodule Producer do
     YProcess.stop(producer)
   end
 
-  defp get_number do
-    (:random.uniform * 10) |> :erlang.trunc
-  end
-
   def init(channel) do
     _ = :os.system_time(:seconds) |> :random.seed
     {:create, [channel], [channel], 1000}
   end
 
   def handle_info(:timeout, channels) do
-    number = get_number
+    number = :erlang.trunc(:random.uniform * 10)
     {:emit, channels, number, channels, 1000}
   end
 end
@@ -136,10 +132,10 @@ defmodule Consumer do
   end
 
   def handle_event(channel, number, channel) when is_integer(number) do
-    IO.puts inspect {self, number}
+    IO.inspect {self, number}
     {:noreply, channel}
   end
-    end
+end
 ```
 
 So when we start a `Producer` and several `Consumer`s we would have the
@@ -267,7 +263,7 @@ end
 
 After you're done, run this in your shell to fetch the new dependency:
 
-```sh
+```
 $ mix deps.get
 ```
 

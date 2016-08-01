@@ -35,9 +35,9 @@ defmodule YProcess.Mixfile do
 
   defp description do
     """
-    GenServer wrapper behaviour for pub/sub between processes using pg2 and
-    Phoenix pub/sub (with any adapter) and a behaviour to create custom
-    pub/sub backends.
+    GenServer wrapper behaviour for pubsub between processes using pg2 and
+    Phoenix PubSub (with any adapter) and a behaviour to create custom
+    pubsub backends.
     """
   end
 

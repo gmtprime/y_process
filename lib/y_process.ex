@@ -1272,68 +1272,119 @@ defmodule YProcess do
   #
   # Returns:
   #   `GenServer` response.
-  defp cast_response(response, %YProcess{backend: backend} = state) do
-    case response do
-      {:noreply, mod_state} ->
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:noreply, mod_state, timeout} ->
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:create, channels, mod_state} ->
-        _ = Backend.create(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:create, channels, mod_state, timeout} ->
-        _ = Backend.create(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:delete, channels, mod_state} ->
-        _ = Backend.delete(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:delete, channels, mod_state, timeout} ->
-        _ = Backend.delete(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:join, channels, mod_state} ->
-        _ = Backend.join(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:join, channels, mod_state, timeout} ->
-        _ = Backend.join(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:leave, channels, mod_state} ->
-        _ = Backend.leave(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:leave, channels, mod_state, timeout} ->
-        _ = Backend.leave(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:emit, channels, message, mod_state} ->
-        _ = emit_noack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:emit, channels, message, mod_state, timeout} ->
-        _ = emit_noack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:emit_ack, channels, message, mod_state} ->
-        _ = emit_ack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:noreply, new_state}
-      {:emit_ack, channels, message, mod_state, timeout} ->
-        _ = emit_ack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:noreply, new_state, timeout}
-      {:stop, reason, mod_state} ->
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:stop, reason, new_state}
-      other ->
-        {:stop, {:bad_return_value, other}, state}
-    end
+  defp cast_response({:noreply, mod_state}, %YProcess{} = state) do
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response({:noreply, mod_state, timeout}, %YProcess{} = state) do
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:create, channels, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.create(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response(
+    {:create, channels, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.create(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:delete, channels, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.delete(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response(
+    {:delete, channels, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.delete(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:join, channels, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.join(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response(
+    {:join, channels, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.join(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:leave, channels, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.leave(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response(
+    {:leave, channels, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.leave(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:emit, channels, message, mod_state},
+    %YProcess{} = state
+  ) do
+    _ = emit_noack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response(
+    {:emit, channels, message, mod_state, timeout},
+    %YProcess{} = state
+  ) do
+    _ = emit_noack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:emit_ack, channels, message, mod_state},
+    %YProcess{} = state
+  ) do
+    _ = emit_ack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:noreply, new_state}
+  end
+  defp cast_response(
+    {:emit_ack, channels, message, mod_state, timeout},
+    %YProcess{} = state
+  ) do
+    _ = emit_ack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:noreply, new_state, timeout}
+  end
+  defp cast_response(
+    {:stop, reason, mod_state},
+    %YProcess{} = state
+  ) do
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:stop, reason, new_state}
+  end
+  defp cast_response(other, %YProcess{} = state) do
+    {:stop, {:bad_return_value, other}, state}
   end
 
   ##
@@ -1345,67 +1396,121 @@ defmodule YProcess do
   #
   # Returns:
   #   `GenServer` response.
-  defp call_response(response, %YProcess{backend: backend} = state) do
-    case response do
-      {:reply, reply, mod_state} ->
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:reply, reply, mod_state, timeout} ->
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:rcreate, channels, reply, mod_state} ->
-        _ = Backend.create(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:rcreate, channels, reply, mod_state, timeout} ->
-        _ = Backend.create(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:rdelete, channels, reply, mod_state} ->
-        _ = Backend.delete(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:rdelete, channels, reply, mod_state, timeout} ->
-        _ = Backend.delete(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:rjoin, channels, reply, mod_state} ->
-        _ = Backend.join(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:rjoin, channels, reply, mod_state, timeout} ->
-        _ = Backend.join(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:rleave, channels, reply, mod_state} ->
-        _ = Backend.leave(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:rleave, channels, reply, mod_state, timeout} ->
-        _ = Backend.leave(backend, channels)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:remit, channels, message, reply, mod_state} ->
-        _ = emit_noack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:remit, channels, message, reply, mod_state, timeout} ->
-        _ = emit_noack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:remit_ack, channels, message, reply, mod_state} ->
-        _ = emit_ack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:reply, reply, new_state}
-      {:remit_ack, channels, message, reply, mod_state, timeout} ->
-        _ = emit_ack_message(self(), channels, message)
-        new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-        {:reply, reply, new_state, timeout}
-      {:stop, reason, reply, mod_state} ->
-        new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-        {:stop, reason, reply, new_state}
-      other ->
-        cast_response(other, state)
-    end
+  defp call_response({:reply, reply, mod_state}, %YProcess{} = state) do
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:reply, reply, mod_state, timeout},
+    %YProcess{} = state
+  ) do
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:rcreate, channels, reply, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.create(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:rcreate, channels, reply, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.create(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:rdelete, channels, reply, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.delete(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:rdelete, channels, reply, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.delete(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:rjoin, channels, reply, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.join(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:rjoin, channels, reply, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.join(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:rleave, channels, reply, mod_state},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.leave(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:rleave, channels, reply, mod_state, timeout},
+    %YProcess{backend: backend} = state
+  ) do
+    _ = Backend.leave(backend, channels)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:remit, channels, message, reply, mod_state},
+    %YProcess{} = state
+  ) do
+    _ = emit_noack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:remit, channels, message, reply, mod_state, timeout},
+    %YProcess{} = state
+  ) do
+    _ = emit_noack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:remit_ack, channels, message, reply, mod_state},
+    %YProcess{} = state
+  ) do
+    _ = emit_ack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:reply, reply, new_state}
+  end
+  defp call_response(
+    {:remit_ack, channels, message, reply, mod_state, timeout},
+    %YProcess{} = state
+  ) do
+    _ = emit_ack_message(self(), channels, message)
+    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    {:reply, reply, new_state, timeout}
+  end
+  defp call_response(
+    {:stop, reason, reply, mod_state},
+    %YProcess{} = state
+  ) do
+    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    {:stop, reason, reply, new_state}
+  end
+  defp call_response(other, state) do
+    cast_response(other, state)
   end
 end

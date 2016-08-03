@@ -1,7 +1,5 @@
 defmodule YProcess do
   @moduledoc """
-  # YProcess
-
   A behaviour module for implementing a server of a client-server relation with
   publisher-subscriber capabilities. This is a generalized implementation of a
   publisher subscriber using `:pg2` library using a `GenServer`.

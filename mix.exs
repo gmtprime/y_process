@@ -1,7 +1,7 @@
 defmodule YProcess.Mixfile do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
 
   def project do
     [app: :y_process,
@@ -22,8 +22,8 @@ defmodule YProcess.Mixfile do
   defp deps do
     [{:phoenix_pubsub, "~> 1.0"},
      {:earmark, ">= 0.0.0", only: :dev},
-     {:ex_doc, "~> 0.12", only: :dev},
-     {:credo, "~> 0.4.5", only: [:dev, :docs]},
+     {:ex_doc, "~> 0.13", only: :dev},
+     {:credo, "~> 0.4.7", only: [:dev, :docs]},
      {:inch_ex, ">= 0.0.0", only: [:dev, :docs]}]
   end
 

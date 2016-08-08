@@ -10,8 +10,8 @@ otp_release:
 before_script:
   - MIX_ENV=test mix deps.get
   - MIX_ENV=test mix deps.compile
-script:
   - MIX_ENV=test mix compile
+script:
   - MIX_ENV=test mix test
 after_script:
   - MIX_ENV=docs mix deps.get

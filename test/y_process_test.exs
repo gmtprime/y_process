@@ -1478,8 +1478,8 @@ defmodule YProcessTest do
     send(producer, emit)
     assert_receive :continue, 200
     message = {:message, channel}
-    assert_receive {:DELIVERED, _, ^channel, ^message}, 200
     assert_receive {:received, ^channel, ^message}, 200
+    assert_receive {:DELIVERED, _, ^channel, ^message}, 200
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer) 
   end

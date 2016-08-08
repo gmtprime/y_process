@@ -255,8 +255,6 @@ defmodule YProcess do
 
   @cast_header :"Y_CAST_EVENT"
   @call_header :"Y_CALL_EVENT"
-  @emit_ack_header :"Y_EMIT_ACK_EVENT"
-  @emit_noack_header :"Y_EMIT_NOACK_EVENT"
   @ack_header :"Y_ACK_EVENT"
 
   ########
@@ -791,7 +789,7 @@ defmodule YProcess do
   """
   defdelegate cast(conn, request), to: :gen_server
 
-  defstruct [:module, :mod_state, :backend, :timeout]
+  defstruct [:module, :mod_state, :backend]
 
   #############################################################################
   # Callback definition.
@@ -893,47 +891,15 @@ defmodule YProcess do
   end
 
   @doc false
-  def handle_info(
-    {@emit_noack_header, channels, message},
-    %YProcess{timeout: nil} = state
-  ) do
-    Backend.emit(state.backend, channels, message, &gen_cast_message/2)
-    {:noreply, state}
-  end
-  def handle_info(
-    {@emit_noack_header, channels, message},
-    %YProcess{timeout: timeout} = state
-  ) do
-    Backend.emit(state.backend, channels, message, &gen_cast_message/2)
-    {:noreply, state, timeout}
-  end
-  def handle_info(
-    {@emit_ack_header, channels, message},
-    %YProcess{timeout: nil} = state
-  ) do
-    Backend.emit(state.backend, channels, message, &gen_call_message/2)
-    {:noreply, state}
-  end
-  def handle_info(
-    {@emit_ack_header, channels, message},
-    %YProcess{timeout: timeout} = state
-  ) do
-    Backend.emit(state.backend, channels, message, &gen_call_message/2)
-    {:noreply, state, timeout}
-  end
   def handle_info({@cast_header, _, _} = request, %YProcess{} = state) do
     handle_message(:handle_event, request, nil, state)
   end
   def handle_info({@call_header, _, _, _} = request, %YProcess{} = state) do
     handle_message(:handle_event, request, nil, state)
   end
-  def handle_info({@ack_header, _, pid, _, _}, %YProcess{timeout: nil} = state)
+  def handle_info({@ack_header, _, pid, _, _}, %YProcess{} = state)
       when pid != self() do
     {:noreply, state}
-  end
-  def handle_info({@ack_header, _, pid, _, _}, %YProcess{timeout: timeout} = state)
-      when pid != self() do
-    {:noreply, state, timeout}
   end
   def handle_info({@ack_header, subscriber, _, channel, message}, %YProcess{} = state) do
     request = {:DELIVERED, subscriber, channel, message}
@@ -1150,9 +1116,10 @@ defmodule YProcess do
     {@cast_header, channel, message}
   end
 
-  defp gen_call_message(channel, message) do
-    from = self()
-    {@call_header, channel, message, from}
+  defp gen_call_message(from) do
+    fn channel, message ->
+      {@call_header, channel, message, from}
+    end
   end
 
   ##
@@ -1167,26 +1134,6 @@ defmodule YProcess do
   end
 
   ##
-  # Emit ack message.
-  #
-  # Args:
-  #   * `sender_pid` - Sender PID.
-  defp emit_ack_message(sender_pid, channels, message) do
-    emit_ack = {@emit_ack_header, channels, message}
-    send sender_pid, emit_ack
-  end
-
-  ##
-  # Emit no ack message.
-  #
-  # Args:
-  #   * `sender_pid` - Sender PID.
-  defp emit_noack_message(sender_pid, channels, message) do
-    emit_noack = {@emit_noack_header, channels, message}
-    send sender_pid, emit_noack
-  end
-
-  ##
   # Handles requests.
   #
   # Args:
@@ -1197,28 +1144,46 @@ defmodule YProcess do
   #
   # Returns:
   #   `GenServer` response.
-  defp handle_message(:handle_event, {@call_header, channel, message, from},
-                      nil, %YProcess{} = state) do
+  defp handle_message(
+    :handle_event,
+    {@call_header, channel, message, from},
+    nil,
+    %YProcess{module: module, mod_state: mod_state} = state
+  ) do
     handle_async(fn ->
       send_ack_message(self(), from, channel, message)
-      apply(state.module, :handle_event, [channel, message, state.mod_state])
+      apply(module, :handle_event, [channel, message, mod_state])
     end, state)
   end
-  defp handle_message(:handle_event, {@cast_header, channel, message},
-                      nil, %YProcess{} = state) do
+  defp handle_message(
+    :handle_event,
+    {@cast_header, channel, message},
+    nil,
+    %YProcess{module: module, mod_state: mod_state} = state
+  ) do
     handle_async(fn ->
-      apply(state.module, :handle_event, [channel, message, state.mod_state])
+      apply(module, :handle_event, [channel, message, mod_state])
     end, state)
   end
-  defp handle_message(callback, request, nil, %YProcess{} = state) do
-    handle_sync(fn ->
-      apply(state.module, callback, [request, state.mod_state])
+  defp handle_message(
+    callback,
+    request,
+    nil,
+    %YProcess{module: module, mod_state: mod_state} = state
+  ) do
+    handle_async(fn ->
+      apply(module, callback, [request, mod_state])
     end, state)
   end
-  defp handle_message(callback, request, from, %YProcess{} = state) do
+  defp handle_message(
+    callback,
+    request,
+    from,
+    %YProcess{module: module, mod_state: mod_state} = state
+  ) do
     handle_sync(fn ->
-      apply(state.module, callback, [request, from, state.mod_state])
-    end, state)
+      apply(module, callback, [request, from, mod_state])
+    end, from, state)
   end
 
   ##
@@ -1247,11 +1212,12 @@ defmodule YProcess do
   #
   # Args:
   #   * `function` - Function to handle the message as `YProcess`.
+  #   * `from` - From tuple.
   #   * `state` - `YProcess` state.
   #
   # Returns:
   #   `GenServer` response.
-  defp handle_sync(function, %YProcess{} = state) do
+  defp handle_sync(function, from, %YProcess{} = state) do
     try do
       function.()
     catch
@@ -1259,7 +1225,7 @@ defmodule YProcess do
         :erlang.raise(:error, {:nocatch, value}, System.stacktrace())
     else
       response ->
-        call_response(response, state)
+        call_response(response, from, state)
     end
   end
 
@@ -1273,11 +1239,11 @@ defmodule YProcess do
   # Returns:
   #   `GenServer` response.
   defp cast_response({:noreply, mod_state}, %YProcess{} = state) do
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response({:noreply, mod_state, timeout}, %YProcess{} = state) do
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
@@ -1285,7 +1251,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.create(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response(
@@ -1293,7 +1259,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.create(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
@@ -1301,7 +1267,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.delete(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response(
@@ -1309,7 +1275,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.delete(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
@@ -1317,7 +1283,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.join(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response(
@@ -1325,7 +1291,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.join(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
@@ -1333,7 +1299,7 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.leave(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response(
@@ -1341,46 +1307,56 @@ defmodule YProcess do
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.leave(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
     {:emit, channels, message, mod_state},
-    %YProcess{} = state
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_noack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, &gen_cast_message/2)
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response(
     {:emit, channels, message, mod_state, timeout},
-    %YProcess{} = state
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_noack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, &gen_cast_message/2)
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
     {:emit_ack, channels, message, mod_state},
-    %YProcess{} = state
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_ack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    sender = self()
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, gen_call_message(sender))
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state}
   end
   defp cast_response(
     {:emit_ack, channels, message, mod_state, timeout},
-    %YProcess{} = state
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_ack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    sender = self()
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, gen_call_message(sender))
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
     {:noreply, new_state, timeout}
   end
   defp cast_response(
     {:stop, reason, mod_state},
     %YProcess{} = state
   ) do
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:stop, reason, new_state}
   end
   defp cast_response(other, %YProcess{} = state) do
@@ -1396,121 +1372,149 @@ defmodule YProcess do
   #
   # Returns:
   #   `GenServer` response.
-  defp call_response({:reply, reply, mod_state}, %YProcess{} = state) do
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+  defp call_response({:reply, reply, mod_state}, _from, %YProcess{} = state) do
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state}
   end
   defp call_response(
     {:reply, reply, mod_state, timeout},
+    _from,
     %YProcess{} = state
   ) do
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state, timeout}
   end
   defp call_response(
     {:rcreate, channels, reply, mod_state},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.create(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state}
   end
   defp call_response(
     {:rcreate, channels, reply, mod_state, timeout},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.create(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state, timeout}
   end
   defp call_response(
     {:rdelete, channels, reply, mod_state},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.delete(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state}
   end
   defp call_response(
     {:rdelete, channels, reply, mod_state, timeout},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.delete(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state, timeout}
   end
   defp call_response(
     {:rjoin, channels, reply, mod_state},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.join(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state}
   end
   defp call_response(
     {:rjoin, channels, reply, mod_state, timeout},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.join(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state, timeout}
   end
   defp call_response(
     {:rleave, channels, reply, mod_state},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.leave(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state}
   end
   defp call_response(
     {:rleave, channels, reply, mod_state, timeout},
+    _from,
     %YProcess{backend: backend} = state
   ) do
     _ = Backend.leave(backend, channels)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:reply, reply, new_state, timeout}
   end
   defp call_response(
     {:remit, channels, message, reply, mod_state},
-    %YProcess{} = state
+    from,
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_noack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-    {:reply, reply, new_state}
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, &gen_cast_message/2)
+      YProcess.reply(from, reply)
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
+    {:noreply, new_state}
   end
   defp call_response(
     {:remit, channels, message, reply, mod_state, timeout},
-    %YProcess{} = state
+    from,
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_noack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-    {:reply, reply, new_state, timeout}
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, &gen_cast_message/2)
+      YProcess.reply(from, reply)
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
+    {:noreply, new_state, timeout}
   end
   defp call_response(
     {:remit_ack, channels, message, reply, mod_state},
-    %YProcess{} = state
+    from,
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_ack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
-    {:reply, reply, new_state}
+    sender = self()
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, gen_call_message(sender))
+      YProcess.reply(from, reply)
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
+    {:noreply, new_state}
   end
   defp call_response(
     {:remit_ack, channels, message, reply, mod_state, timeout},
-    %YProcess{} = state
+    from,
+    %YProcess{backend: backend} = state
   ) do
-    _ = emit_ack_message(self(), channels, message)
-    new_state = %YProcess{state | mod_state: mod_state, timeout: timeout}
-    {:reply, reply, new_state, timeout}
+    sender = self()
+    spawn_link fn ->
+      Backend.emit(backend, channels, message, gen_call_message(sender))
+      YProcess.reply(from, reply)
+    end
+    new_state = %YProcess{state | mod_state: mod_state}
+    {:noreply, new_state, timeout}
   end
   defp call_response(
     {:stop, reason, reply, mod_state},
+    _from,
     %YProcess{} = state
   ) do
-    new_state = %YProcess{state | mod_state: mod_state, timeout: nil}
+    new_state = %YProcess{state | mod_state: mod_state}
     {:stop, reason, reply, new_state}
   end
-  defp call_response(other, state) do
+  defp call_response(other, _from, state) do
     cast_response(other, state)
   end
 end

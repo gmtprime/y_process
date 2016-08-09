@@ -644,6 +644,7 @@ defmodule YProcess do
     quote location: :keep do
       @behaviour unquote(__MODULE__)
 
+      @doc false
       def get_backend do
         unquote(backend)
       end

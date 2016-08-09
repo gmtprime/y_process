@@ -23,7 +23,7 @@ defmodule YProcess.Mixfile do
     [{:phoenix_pubsub, "~> 1.0"},
      {:earmark, ">= 0.0.0", only: :dev},
      {:ex_doc, "~> 0.13", only: :dev},
-     {:credo, "~> 0.4.7", only: [:dev, :docs]},
+     {:credo, "~> 0.4.8", only: [:dev, :docs]},
      {:inch_ex, ">= 0.0.0", only: [:dev, :docs]}]
   end
 

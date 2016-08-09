@@ -239,17 +239,25 @@ To configure the backend globally for all the `YProcess`es just set the followin
     
     config :y_process,
       backend: YProcess.Backend.PhoenixPubSub
-      opts: [app_name: MyApp.Endpoint]
-
-    # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
-    # for more information.
-    config :my_app, MyApp.Endpoint,
-      pubsub: [adapter: Phoenix.PubSub.PG2,
-               pool_size: 1,
-               name: MyApp.PubSub]
+      name: MyApp.PubSub
+      adapter: Phoenix.PubSub.PG2,
+      options: [pool_size: 1]
     ```
-    
-    where `:my_app` is the name of the application. 
+    and then add the `Phoenix.PubSub` supervisor to your supervision tree:
+   
+    ```elixir
+    def start(_type, _args) do
+      import Supervisor.Spec, warn: false
+
+      children = [
+        supervisor(YProcess.PhoenixPubSub, []),
+        (...)
+      ] 
+
+      opts = (...)
+      Supervisor.start_link(children, opts)
+    end
+    ```
 
 ## Installation
 
@@ -257,7 +265,7 @@ Add `YProcess` as a dependency in your `mix.exs` file.
 
 ```elixir
 def deps do
-    [{:y_process, "~> 0.1.4"}]
+  [{:y_process, "~> 0.1.5"}]
 end
 ```
 

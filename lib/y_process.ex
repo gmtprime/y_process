@@ -216,26 +216,35 @@ defmodule YProcess do
             backend: YProces.Backend.PG2
 
   * For `YProcess.Backend.PhoenixPubSub`
-
+ 
+          use Mix.Config
+          
           config :y_process,
-            backend: Backend.PhoenixPubSub
-            opts: [app_name: MyApp.Endpoint]
+            backend: YProcess.Backend.PhoenixPubSub
+            name: MyApp.PubSub
+            adapter: Phoenix.PubSub.PG2,
+            options: [pool_size: 1]
+    
+    and then add the `Phoenix.PubSub` supervisor to your supervision tree:
+    
+          def start(_type, _args) do
+            import Supervisor.Spec, warn: false
 
-          # Phoenix PubSub configuration. Look at Phoenix PubSub documentation
-          # for more information.
-          config :my_app, MyApp.Endpoint,
-            pubsub: [adapter: Phoenix.PubSub.PG2,
-                     pool_size: 1,
-                     name: MyApp.PubSub]
+            children = [
+              supervisor(YProcess.PhoenixPubSub, []),
+              (...)
+            ] 
 
-  where `:my_app` is the name of the application.
+            opts = (...)
+            Supervisor.start_link(children, opts)
+          end
 
   ## Installation
 
   Add `YProcess` as a dependency in your `mix.exs` file.
 
       def deps do
-          [{:y_process, "~> 0.0.2"}]
+          [{:y_process, "~> 0.1.5"}]
       end
 
   After you're done, run this in your shell to fetch the new dependency:

@@ -5,6 +5,8 @@ defmodule YProcess.Backend.PhoenixPubSub do
   use YProcess.Backend
   alias Phoenix.PubSub
 
+  @name YProcess.PubSub
+
   @doc """
   Creates a `channel` in `Phoenix.PubSub`. The channels don't need to be
   created in `Phoenix.PubSub` so this is just for completion. This function
@@ -31,19 +33,7 @@ defmodule YProcess.Backend.PhoenixPubSub do
   ##
   # Gets the app name.
   defp get_app_name do
-    case Application.get_env(:y_process, :opts, []) do
-      [] ->
-        {:error, "Cannot find app name"}
-      opts when is_list(opts) ->
-        case Keyword.get(opts, :app_name, nil) do
-          nil ->
-            {:error, "Cannot find_app_name"}
-          name ->
-            {:ok, name}
-        end
-      _ ->
-        {:error, "Cannot find app name"}
-    end
+    Application.get_env(:y_process, :name, @name)
   end
 
   @doc """
@@ -52,13 +42,9 @@ defmodule YProcess.Backend.PhoenixPubSub do
   """
   def join(channel, _pid) do
     channel_name = transform_name(channel)
-    case get_app_name() do
-      {:ok, name} ->
-        PubSub.unsubscribe(name, channel_name)
-        PubSub.subscribe(name, channel_name)
-      error ->
-        error
-    end
+    name = get_app_name()
+    PubSub.unsubscribe(name, channel_name)
+    PubSub.subscribe(name, channel_name)
   end
 
   @doc """
@@ -67,12 +53,8 @@ defmodule YProcess.Backend.PhoenixPubSub do
   """
   def leave(channel, _pid) do
     channel_name = transform_name(channel)
-    case get_app_name() do
-      {:ok, name} ->
-        PubSub.unsubscribe(name, channel_name)
-      error ->
-        error
-    end
+    name = get_app_name()
+    PubSub.unsubscribe(name, channel_name)
   end
 
   @doc """
@@ -80,11 +62,33 @@ defmodule YProcess.Backend.PhoenixPubSub do
   """
   def emit(channel, message) do
     channel_name = transform_name(channel)
-    case get_app_name() do
-      {:ok, name} ->
-        PubSub.broadcast(name, channel_name, message)
-      error ->
-        error
-    end
+    name = get_app_name()
+    PubSub.broadcast(name, channel_name, message)
+  end
+end
+
+defmodule YProcess.PhoenixPubSub do
+  @moduledoc """
+  Helper functions to start a `Phoenix.PubSub` supervisor.
+  """
+
+  @name YProcess.PubSub
+
+  @doc """
+  Starts Phoenix.PubSub supervisor.
+  """
+  def start_link do
+    name = Application.get_env(:y_process, :name, @name)
+    module = Application.get_env(:y_process, :adapter, Phoenix.PubSub.PG2)
+    options = Application.get_env(:y_process, :options, [])
+    module.start_link(name, options)
+  end
+
+  @doc """
+  Stops the `supervisor`.
+  """
+  def stop(supervisor) do
+    module = Application.get_env(:y_process, :adapter, Phoenix.PubSub.PG2)
+    module.stop(supervisor)
   end
 end

@@ -75,12 +75,17 @@ messages coming from the processes the current `YProcess` is subscribed.
 
 ## Callbacks
 
-There are seven callbacks required to be implemented in a `YProcess`. Six of
+There are eight callbacks required to be implemented in a `YProcess`. Six of
 them are the same as `GenServer` but with some other possible return values
 to join, leave, create, delete and emit messages (ackknowledged or not) to
-other processes. The seventh callback is `handle_event/3`. It should be used
-to handle the messages coming from other process if the current process is
-subscribed to the channel they are broadcasting the messages.
+other processes. The remaining two are the following:
+
+  * `handle_event/3`: It should be used to handle the messages coming from
+  other process if the current process is subscribed to the channel they are
+  broadcasting the messages.
+
+  * `ready/3`: It is called after the `:join` or `:create` actions have been
+  executed requested in the `init/1` callback.
 
 ## Example
 
@@ -265,7 +270,7 @@ Add `YProcess` as a dependency in your `mix.exs` file.
 
 ```elixir
 def deps do
-  [{:y_process, "~> 0.1.5"}]
+  [{:y_process, "~> 0.2.0"}]
 end
 ```
 

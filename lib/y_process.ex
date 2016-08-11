@@ -7,7 +7,7 @@ defmodule YProcess do
   This project is heavily inspired by
   [`Connection`](https://github.com/fishcakez/connection).
 
-  ## Solution using `:pg2`
+  ## Solution using PG2
 
       defmodule Consumer do
         def subscribe(channel, callback) do
@@ -69,12 +69,17 @@ defmodule YProcess do
 
   ## Callbacks
 
-  There are seven callbacks required to be implemented in a `YProcess`. Six of
+  There are eight callbacks required to be implemented in a `YProcess`. Six of
   them are the same as `GenServer` but with some other possible return values
   to join, leave, create, delete and emit messages (ackknowledged or not) to
-  other processes. The seventh callback is `handle_event/3`. It should be used
-  to handle the messages coming from other process if the current process is
-  subscribed to the channel they are broadcasting the messages.
+  other processes. The remaining two are the following:
+
+    * `handle_event/3`: It should be used to handle the messages coming from
+    other process if the current process is subscribed to the channel they are
+    broadcasting the messages.
+
+    * `ready/3`: It is called after the `:join` or `:create` actions have been
+    executed requested in the `init/1` callback.
 
   ## Example
 
@@ -252,7 +257,6 @@ defmodule YProcess do
       $ mix deps.get
 
   """
-  use Behaviour
   @behaviour :gen_server
   alias __MODULE__, as: YProcess
   alias YProcess.Backend
@@ -260,6 +264,7 @@ defmodule YProcess do
   ##########
   # Headers.
 
+  @init_header :"Y_INIT_EVENT"
   @cast_header :"Y_CAST_EVENT"
   @call_header :"Y_CALL_EVENT"
   @ack_header :"Y_ACK_EVENT"
@@ -344,26 +349,8 @@ defmodule YProcess do
   Returning `{:create, channels, state}` will create the channels listed in
   `channels` where every channel can be an arbitrary term.
 
-  Returning `{:create, channels, state, timeout}` is similar to
-  `{:create, channels, state}` except `handle_info(:timeout, state)` will be
-  called after `timeout` milliseconds if no messages are received within the
-  timeout.
-
-  Returning `{:create, channels, state, :hibernate}` is similar to
-  `{:create, channels, state}` except the process is hibernated before entering
-  the loop. See `handle_call/3` for more information on hibernation.
-
   Returning `{:join, channels, state}` will subscribe to the channels
   listed in `channels` where every channel can be an arbitrary term.
-
-  Returning `{:join, channels, state, timeout}` is similar to
-  `{:join, channels, state}` except `handle_info(:timeout, state)` will be
-  called after `timeout` milliseconds if no messages are received within the
-  timeout.
-
-  Returning `{:join, channels, state, :hibernate}` is similar to
-  `{:join, channels, state}` except the process is hibernated before entering
-  the loop. See `handle_call/3` for more information on hibernation.
 
   Returning `:ignore` will cause `start_link/3` to return `:ignore` and the
   process will exit normally without entering the loop or calling
@@ -387,9 +374,7 @@ defmodule YProcess do
     {:ok, state} |
     {:ok, state, timeout | :hibernate} |
     {:create, channels, state} |
-    {:create, channels, state, timeout | :hibernate} |
     {:join, channels, state} |
-    {:join, channels, state, timeout | :hibernate} |
     :ignore |
     {:stop, reason :: any}
       when state: any, channels: list
@@ -593,10 +578,24 @@ defmodule YProcess do
   `channel` is the channel from which the `message` is been received. `state`
   is the current state of the `YProcess`.
 
-  Returns the same output as `handle_cast/2`
+  Returns the same output as `handle_cast/2`.
   """
   @callback handle_event(channel :: term, message :: term, state ::term) ::
     async_response
+
+  @doc """
+  Invoked when the server joined or created the channels after executing
+  `init/1`.
+
+  `action` can be either `:joined` or `:created` depending on which action
+  executed to join or create the `channels`, repectively. `state` is the
+  current state of the `YProcess`.
+
+  Returns the same output as `handle_cast/2`.
+  """
+  @callback ready(action, channels, state :: term) ::
+    async_response
+      when action: :joined | :created
 
   @doc """
   Invoked when the server is about to exit. It should do any cleanup required.
@@ -664,6 +663,11 @@ defmodule YProcess do
       end
 
       @doc false
+      def ready(_action, _channels, state) do
+        {:noreply, state}
+      end
+
+      @doc false
       def handle_call(message, _from, state) do
         reason = {:bad_call, message}
         case :erlang.phash2(1, 1) do
@@ -705,8 +709,9 @@ defmodule YProcess do
         {:ok, state}
       end
 
-      defoverridable [init: 1, handle_call: 3, handle_cast: 2, handle_info: 2,
-                      handle_event: 3, terminate: 2, code_change: 3]
+      defoverridable [init: 1, ready: 3, handle_call: 3, handle_cast: 2,
+                      handle_info: 2, handle_event: 3, terminate: 2,
+                      code_change: 3]
     end
   end
 
@@ -836,18 +841,10 @@ defmodule YProcess do
         init_ack(starter)
         state = gen_state(module, mod_state, backend)
         enter_create(channels, name, opts, :infinity, state)
-      {:create, channels, mod_state, timeout} when is_list(channels) ->
-        init_ack(starter)
-        state = gen_state(module, mod_state, backend)
-        enter_create(channels, name, opts, timeout, state)
       {:join, channels, mod_state} when is_list(channels) ->
         init_ack(starter)
         state = gen_state(module, mod_state, backend)
         enter_join(channels, name, opts, :infinity, state)
-      {:join, channels, mod_state, timeout} when is_list(channels) ->
-        init_ack(starter)
-        state = gen_state(module, mod_state, backend)
-        enter_join(channels, name, opts, timeout, state)
       :ignore ->
         init_stop(starter, name, :ignore)
       {:stop, reason} ->
@@ -899,6 +896,9 @@ defmodule YProcess do
   end
 
   @doc false
+  def handle_info({@init_header, _, _} = request, %YProcess{} = state) do
+    handle_message(:ready, request, nil, state)
+  end
   def handle_info({@cast_header, _, _} = request, %YProcess{} = state) do
     handle_message(:handle_event, request, nil, state)
   end
@@ -1030,6 +1030,8 @@ defmodule YProcess do
         enter_terminate(name, reason, {:EXIT, reason}, state)
     else
       :ok ->
+        message = gen_init_message(:created, channels)
+        Process.send_after(self(), message, 0)
         enter_loop(name, opts, timeout, state)
     end
   end
@@ -1051,6 +1053,8 @@ defmodule YProcess do
         enter_terminate(name, reason, {:EXIT, reason}, state)
     else
       :ok ->
+        message = gen_init_message(:joined, channels)
+        Process.send_after(self(), message, 0)
         enter_loop(name, opts, timeout, state)
     end
   end
@@ -1120,6 +1124,13 @@ defmodule YProcess do
   #############################################################################
   # GenServer helpers.
 
+  defp gen_init_message(:created, channels) when is_list(channels) do
+    {@init_header, :created, channels}
+  end
+  defp gen_init_message(:joined, channels) when is_list(channels) do
+    {@init_header, :joined, channels}
+  end
+
   defp gen_cast_message(channel, message) do
     {@cast_header, channel, message}
   end
@@ -1152,6 +1163,16 @@ defmodule YProcess do
   #
   # Returns:
   #   `GenServer` response.
+  defp handle_message(
+    :ready,
+    {@init_header, action, channels},
+    nil,
+    %YProcess{module: module, mod_state: mod_state} = state
+  ) do
+    handle_async(fn ->
+      apply(module, :ready, [action, channels, mod_state])
+    end, state)
+  end
   defp handle_message(
     :handle_event,
     {@call_header, channel, message, from},

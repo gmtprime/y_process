@@ -57,102 +57,30 @@ defmodule YProcessTest do
   end
 
   test "init {:create, channels, state}" do
-    ref0 = make_ref()
-    ref1 = make_ref()
-    fun = fn ->
-      {:create, [ref0, ref1], 0}
-    end
-
-    assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
-    assert YProcess.call(pid, :state) == 0
-    assert :ok == :pg2.join(ref0, self)
-    assert :ok == :pg2.join(ref1, self)
-    assert :ok == YProcess.stop(pid)
-  end
-
-  test "init {:create, channels, state, timeout}" do
-    ref0 = make_ref()
-    ref1 = make_ref()
     parent = self()
-
-    fun = fn ->
-      timeout = fn :timeout ->
-        send(parent, 1)
-        {:noreply, 2}
-      end
-      {:create, [ref0, ref1], timeout, 0}
-    end
-
-    assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
-    assert_receive 1, 200
-    assert :ok == :pg2.join(ref0, self)
-    assert :ok == :pg2.join(ref1, self)
-    assert :ok == YProcess.stop(pid)
-  end
-
-  test "init {:create, channels, state, :hibernate}" do
     ref0 = make_ref()
     ref1 = make_ref()
     fun = fn ->
-      {:create, [ref0, ref1], 0, :hibernate}
+      {:create, [ref0, ref1], parent}
     end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
-    :timer.sleep(100)
-    assert Process.info(pid, :current_function) ===
-      {:current_function, {:erlang, :hibernate, 3}}
-    assert YProcess.call(pid, :state) == 0
+    assert_receive {:ready, :created, [^ref0, ^ref1]}
     assert :ok == :pg2.join(ref0, self)
     assert :ok == :pg2.join(ref1, self)
     assert :ok == YProcess.stop(pid)
   end
 
   test "init {:join, channels, state}" do
-    ref0 = make_ref()
-    ref1 = make_ref()
-    fun = fn ->
-      {:join, [ref0, ref1], 0}
-    end
-
-    assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
-    assert YProcess.call(pid, :state) == 0
-    assert :ok == :pg2.join(ref0, self)
-    assert :ok == :pg2.join(ref1, self)
-    assert :ok == YProcess.stop(pid)
-  end
-
-  test "init {:join, channels, state, timeout}" do
-    ref0 = make_ref()
-    ref1 = make_ref()
     parent = self()
-
-    fun = fn ->
-      timeout = fn :timeout ->
-        send(parent, 1)
-        {:noreply, 2}
-      end
-      {:join, [ref0, ref1], timeout, 0}
-    end
-
-    assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
-    assert_receive 1, 200
-    assert :ok == :pg2.join(ref0, self)
-    assert :ok == :pg2.join(ref1, self)
-    assert :ok == YProcess.stop(pid)  
-  end
-
-  test "init {:join, channels, state, :hibernate}" do
     ref0 = make_ref()
     ref1 = make_ref()
     fun = fn ->
-      {:join, [ref0, ref1], 0, :hibernate}
+      {:join, [ref0, ref1], parent}
     end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
-    :timer.sleep(100)
-    assert Process.info(pid, :current_function) ===
-      {:current_function, {:erlang, :hibernate, 3}}
-    assert YProcess.call(pid, :state) == 0
+    assert_receive {:ready, :joined, [^ref0, ^ref1]}
     assert :ok == :pg2.join(ref0, self)
     assert :ok == :pg2.join(ref1, self)
     assert :ok == YProcess.stop(pid)

@@ -6,6 +6,14 @@ defmodule EvalYProcess do
   def init(fun) when is_function(fun, 0), do: fun.()
   def init(state), do: {:ok, state}
 
+  def ready(action, channels, pid) when is_pid(pid) do
+    send pid, {:ready, action, channels}
+    {:noreply, pid}
+  end
+  def ready(_action, _channels, state) do
+    {:noreply, state}
+  end
+
   def handle_call(:state, _from, state), do:
     {:reply, state, state}
   def handle_call(fun, from, state) when is_function(fun), do:

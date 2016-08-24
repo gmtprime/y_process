@@ -249,7 +249,7 @@ defmodule YProcess do
   Add `YProcess` as a dependency in your `mix.exs` file.
 
       def deps do
-          [{:y_process, "~> 0.1.5"}]
+          [{:y_process, "~> 0.2.1"}]
       end
 
   After you're done, run this in your shell to fetch the new dependency:
@@ -264,6 +264,7 @@ defmodule YProcess do
   ##########
   # Headers.
 
+  @ready_header :"Y_READY_EVENT"
   @init_header :"Y_INIT_EVENT"
   @cast_header :"Y_CAST_EVENT"
   @call_header :"Y_CALL_EVENT"
@@ -802,13 +803,38 @@ defmodule YProcess do
   """
   defdelegate cast(conn, request), to: :gen_server
 
-  defstruct [:module, :mod_state, :backend]
+  @doc """
+  Whether a `YProcess` process identified by `conn` is ready or not. A
+  `YProcess` process is `ready` when it joined or created the channels that
+  requested to join or create in the `init/1` callback. This call is blocking
+  and is possible to provide a `timeout` for it. By default is 5000.
+  """
+  def is_ready?(conn, timeout \\ 5000) do
+    YProcess.call(conn, {@ready_header, :sync}, timeout)
+  end
+
+  @doc """
+  Waits until the `YProcess` process identified by `conn` is ready. This call
+  is non-blocking and is possible to provided a `timeout` for it. By default
+  is 5000.
+  """
+  def wait_ready(conn, timeout \\ 5000) do
+    YProcess.call(conn, {@ready_header, :async, timeout}, timeout)
+  end
+
+  defstruct [:module, :mod_state, :backend, :ready, :waiters]
 
   #############################################################################
   # Callback definition.
 
-  defp gen_state(module, mod_state, backend) do
-    %YProcess{module: module, mod_state: mod_state, backend: backend}
+  defp gen_state(module, mod_state, backend, ready \\ false) do
+    %YProcess{
+      module: module,
+      mod_state: mod_state,
+      backend: backend,
+      ready: ready,
+      waiters: []
+    }
   end
 
   ##
@@ -831,11 +857,11 @@ defmodule YProcess do
     else
       {:ok, mod_state} ->
         init_ack(starter)
-        state = gen_state(module, mod_state, backend)
+        state = gen_state(module, mod_state, backend, true)
         enter_loop(name, opts, :infinity, state)
       {:ok, mod_state, timeout} ->
         init_ack(starter)
-        state = gen_state(module, mod_state, backend)
+        state = gen_state(module, mod_state, backend, true)
         enter_loop(name, opts, timeout, state)
       {:create, channels, mod_state} when is_list(channels) ->
         init_ack(starter)
@@ -886,8 +912,44 @@ defmodule YProcess do
   end
 
   @doc false
+  def handle_call(
+    {@ready_header, :sync},
+    _from,
+    %YProcess{ready: ready} = state
+  ) do
+    {:reply, ready, state}
+  end
+  def handle_call(
+    {@ready_header, :async, _},
+    _from,
+    %YProcess{ready: true} = state
+  ) do
+   {:reply, true, state}
+  end
+  def handle_call(
+    {@ready_header, :async, timeout},
+    from,
+    %YProcess{ready: false, waiters: waiters} = state
+  ) do
+    pid = gen_waiter(from, timeout)
+    {:noreply, %YProcess{state | waiters: [pid | waiters]}}
+  end
   def handle_call(request, from, state) do
     handle_message(:handle_call, request, from, state)
+  end
+
+  ##
+  # Generates a waiter.
+  defp gen_waiter(from, timeout) do
+    spawn_link fn ->
+      result =
+        receive do
+          result -> result
+        after
+          timeout -> false
+        end
+      YProcess.reply(from, result)
+    end
   end
 
   @doc false
@@ -896,8 +958,13 @@ defmodule YProcess do
   end
 
   @doc false
-  def handle_info({@init_header, _, _} = request, %YProcess{} = state) do
-    handle_message(:ready, request, nil, state)
+  def handle_info(
+    {@init_header, _, _} = request,
+    %YProcess{waiters: waiters} = state
+  ) do
+    for waiter <- waiters, do: send waiter, true
+    new_state = %YProcess{state | ready: true, waiters: []}
+    handle_message(:ready, request, nil, new_state)
   end
   def handle_info({@cast_header, _, _} = request, %YProcess{} = state) do
     handle_message(:handle_event, request, nil, state)

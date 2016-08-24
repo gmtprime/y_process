@@ -270,7 +270,7 @@ Add `YProcess` as a dependency in your `mix.exs` file.
 
 ```elixir
 def deps do
-  [{:y_process, "~> 0.2.0"}]
+  [{:y_process, "~> 0.2.1"}]
 end
 ```
 

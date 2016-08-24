@@ -7,6 +7,7 @@ defmodule YProcessTest do
     end
 
     assert Sample.init(:my_state) == {:ok, :my_state}
+    assert Sample.ready(:joined, [], :my_state) == {:noreply, :my_state}
     assert catch_exit(Sample.handle_call(:my_call, {self, make_ref}, nil)) ==
       {:bad_call, :my_call}
     assert catch_exit(Sample.handle_cast(:my_cast, nil)) ==
@@ -24,6 +25,8 @@ defmodule YProcessTest do
   test "init {:ok, state}" do
     fun = fn -> {:ok, 0} end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
+    assert YProcess.is_ready?(pid)
+    assert YProcess.wait_ready(pid)
     assert YProcess.call(pid, :state) === 0
     assert :ok == YProcess.stop(pid)
   end
@@ -41,7 +44,7 @@ defmodule YProcessTest do
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
     assert_receive 1, 200
-    assert :ok == YProcess.stop(pid) 
+    assert :ok == YProcess.stop(pid)
   end
 
   test "init {:ok, state, :hibernate}" do
@@ -65,6 +68,7 @@ defmodule YProcessTest do
     end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
+    assert YProcess.wait_ready(pid)
     assert_receive {:ready, :created, [^ref0, ^ref1]}
     assert :ok == :pg2.join(ref0, self)
     assert :ok == :pg2.join(ref1, self)
@@ -80,6 +84,7 @@ defmodule YProcessTest do
     end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, fun)
+    assert YProcess.wait_ready(pid)
     assert_receive {:ready, :joined, [^ref0, ^ref1]}
     assert :ok == :pg2.join(ref0, self)
     assert :ok == :pg2.join(ref1, self)
@@ -157,6 +162,7 @@ defmodule YProcessTest do
   test "handle_call {:reply, reply, state}" do
     fun = fn (_, n) -> {:reply, n, n + 1} end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
+    assert YProcess.wait_ready(pid)
     assert YProcess.call(pid, fun) == 1
     assert YProcess.call(pid, :state) == 2
     assert :ok = YProcess.stop(pid)
@@ -174,7 +180,7 @@ defmodule YProcessTest do
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
     assert YProcess.call(pid, fun) == 1
-    assert_receive {:timeout, 1}, 200
+    assert_receive {:timeout, 1}, 500
     assert :ok = YProcess.stop(pid)
   end
 
@@ -184,6 +190,7 @@ defmodule YProcessTest do
       {:noreply, n + 1}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
+    assert YProcess.wait_ready(pid)
     assert YProcess.call(pid, fun) == 1
     assert YProcess.call(pid, :state) == 2
     assert :ok = YProcess.stop(pid)
@@ -201,7 +208,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
     assert YProcess.call(pid, fun) == 1
-    assert_receive {:timeout, 1}, 200
+    assert_receive {:timeout, 1}, 500
     assert :ok = YProcess.stop(pid)
   end
 
@@ -212,6 +219,7 @@ defmodule YProcessTest do
       {:create, [channel], [channel | channels]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, [])
+    assert YProcess.wait_ready(pid)
     channel = YProcess.call(pid, fun)
     _ = YProcess.call(pid, :state)
     assert is_reference(channel)
@@ -245,7 +253,7 @@ defmodule YProcessTest do
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
     channel = YProcess.call(pid, fun)
     assert is_reference(channel)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert :ok = YProcess.stop(pid)
   end
 
@@ -262,7 +270,7 @@ defmodule YProcessTest do
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
     channel = YProcess.call(pid, fun)
     assert is_reference(channel)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert :ok = YProcess.stop(pid)
   end
 
@@ -277,6 +285,7 @@ defmodule YProcessTest do
       {:delete, [channel], []}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     :ok = YProcess.call(pid, fun)
     _ = YProcess.call(pid, :state)
     assert not (:pg2.which_groups |> Enum.member?(channel))
@@ -293,6 +302,7 @@ defmodule YProcessTest do
       {:rdelete, [channel], channel, []}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     channel = YProcess.call(pid, fun)
     assert not (:pg2.which_groups |> Enum.member?(channel))
     assert :ok = YProcess.stop(pid) 
@@ -315,7 +325,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
     assert :ok = YProcess.call(pid, fun)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert not (:pg2.which_groups |> Enum.member?(channel))
     assert :ok = YProcess.stop(pid) 
   end
@@ -336,7 +346,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
     channel = YProcess.call(pid, fun)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert not (:pg2.which_groups |> Enum.member?(channel))
     assert :ok = YProcess.stop(pid) 
   end
@@ -348,6 +358,7 @@ defmodule YProcessTest do
       {:join, [channel], nil}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.call(pid, fun)
      _ = YProcess.call(pid, :state)
     assert :pg2.which_groups |> Enum.member?(channel)
@@ -361,6 +372,7 @@ defmodule YProcessTest do
       {:rjoin, [channel], channel, nil}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     assert ^channel = YProcess.call(pid, fun)
     assert :pg2.which_groups |> Enum.member?(channel)
     assert :pg2.get_members(channel) |> Enum.member?(pid)
@@ -380,7 +392,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
     assert :ok = YProcess.call(pid, fun)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert :pg2.which_groups |> Enum.member?(channel)
     assert :pg2.get_members(channel) |> Enum.member?(pid)
     assert :ok = YProcess.stop(pid) 
@@ -398,7 +410,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
     assert ^channel = YProcess.call(pid, fun)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert :pg2.which_groups |> Enum.member?(channel)
     assert :pg2.get_members(channel) |> Enum.member?(pid)
     assert :ok = YProcess.stop(pid) 
@@ -414,6 +426,7 @@ defmodule YProcessTest do
       {:leave, [channel], nil}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.call(pid, fun)
      _ = YProcess.call(pid, :state)
     assert not (:pg2.get_members(channel) |> Enum.member?(pid))
@@ -429,6 +442,7 @@ defmodule YProcessTest do
       {:rleave, [channel], :ok, nil}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.call(pid, fun)
     assert not (:pg2.get_members(channel) |> Enum.member?(pid))
     assert :ok = YProcess.stop(pid) 
@@ -451,7 +465,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
     assert :ok = YProcess.call(pid, fun)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert not (:pg2.get_members(channel) |> Enum.member?(pid))
     assert :ok = YProcess.stop(pid) 
   end
@@ -472,7 +486,7 @@ defmodule YProcessTest do
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
     assert :ok = YProcess.call(pid, fun)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert not (:pg2.get_members(channel) |> Enum.member?(pid))
     assert :ok = YProcess.stop(pid) 
   end
@@ -501,7 +515,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.call(producer, emit)
     assert_receive {:received, ^channel, {:message, ^channel}}, 200
@@ -532,7 +548,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.call(producer, emit)
     assert_receive {:received, ^channel, {:message, ^channel}}, 200
@@ -571,7 +589,7 @@ defmodule YProcessTest do
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.call(producer, emit)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert_receive {:received, ^channel, {:message, ^channel}}, 200
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer)
@@ -607,7 +625,7 @@ defmodule YProcessTest do
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.call(producer, emit)
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert_receive {:received, ^channel, {:message, ^channel}}, 200
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer)
@@ -641,7 +659,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.call(producer, emit)
     message = {:message, channel}
@@ -678,7 +698,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.call(producer, emit)
     message = {:message, channel}
@@ -726,7 +748,7 @@ defmodule YProcessTest do
     message = {:message, channel}
     assert_receive {:DELIVERED, _, ^channel, ^message}, 200
     assert_receive {:received, ^channel, ^message}, 200
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer)
   end
@@ -768,7 +790,7 @@ defmodule YProcessTest do
     message = {:message, channel}
     assert_receive {:DELIVERED, _, ^channel, ^message}, 200
     assert_receive {:received, ^channel, ^message}, 200
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer)
   end
@@ -781,6 +803,7 @@ defmodule YProcessTest do
     end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.call(pid, stop)
     assert_receive {:EXIT, ^pid, :normal}, 200
   end
@@ -790,6 +813,7 @@ defmodule YProcessTest do
     stop = fn (_, s) -> {:stop, :normal, :ok, s} end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.call(pid, stop)
     assert_receive {:EXIT, ^pid, :normal}, 200
   end
@@ -802,6 +826,7 @@ defmodule YProcessTest do
       {:noreply, n + 1}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.cast(pid, fun)
     assert YProcess.call(pid, :state) == 2
     assert :ok = YProcess.stop(pid)
@@ -827,6 +852,7 @@ defmodule YProcessTest do
     create = fn ([])-> {:create, [channel], [channel]} end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, [])
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.cast(pid, create)
     assert [^channel] = YProcess.call(pid, :state)
     assert :pg2.which_groups |> Enum.member?(channel)
@@ -861,6 +887,7 @@ defmodule YProcessTest do
       {:delete, [channel], [channel]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.cast(pid, fun)
     assert [^channel] = YProcess.call(pid, :state)
     assert not (:pg2.which_groups |> Enum.member?(channel))
@@ -895,6 +922,7 @@ defmodule YProcessTest do
       {:join, [channel], [channel]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.cast(pid, fun)
     assert [^channel] = YProcess.call(pid, :state)
     assert :pg2.which_groups |> Enum.member?(channel)
@@ -930,6 +958,7 @@ defmodule YProcessTest do
       {:leave, [channel], [channel]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     assert :ok = YProcess.cast(pid, leave)
     assert [^channel] = YProcess.call(pid, :state)
     assert not (:pg2.get_members(channel) |> Enum.member?(pid))
@@ -980,7 +1009,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.cast(producer, emit)
     assert_receive {:received, ^channel, {:message, ^channel}}, 200
@@ -1051,7 +1082,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     assert :ok = YProcess.cast(producer, emit)
     message = {:message, channel}
@@ -1097,7 +1130,7 @@ defmodule YProcessTest do
     assert :ok = YProcess.cast(producer, emit)
     message = {:message, channel}
     assert_receive {:DELIVERED, _, ^channel, ^message}, 200
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert_receive {:received, ^channel, ^message}, 200
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer)
@@ -1122,6 +1155,7 @@ defmodule YProcessTest do
       {:noreply, n + 1}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, 1)
+    assert YProcess.wait_ready(pid)
     send(pid, fun)
     assert_receive :continue, 200
     assert YProcess.call(pid, :state) == 2
@@ -1155,6 +1189,7 @@ defmodule YProcessTest do
     end
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, [])
+    assert YProcess.wait_ready(pid)
     send(pid, create)
     assert_receive :continue, 200
     assert [^channel] = YProcess.call(pid, :state)
@@ -1194,6 +1229,7 @@ defmodule YProcessTest do
       {:delete, [channel], [channel]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     send(pid, fun)
     assert_receive :continue, 200
     assert [^channel] = YProcess.call(pid, :state)
@@ -1232,6 +1268,7 @@ defmodule YProcessTest do
       {:join, [channel], [channel]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     send(pid, fun)
     assert_receive :continue, 200
     assert [^channel] = YProcess.call(pid, :state)
@@ -1272,6 +1309,7 @@ defmodule YProcessTest do
       {:leave, [channel], [channel]}
     end
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(pid)
     send(pid, leave)
     assert_receive :continue, 200
     assert [^channel] = YProcess.call(pid, :state)
@@ -1326,7 +1364,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     send(producer, emit)
     assert_receive :continue, 200
@@ -1401,7 +1441,9 @@ defmodule YProcessTest do
     end
 
     assert {:ok, producer} = YProcess.start_link(EvalYProcess, init)
+    assert YProcess.wait_ready(producer)
     assert {:ok, consumer} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(consumer)
     assert :ok = YProcess.call(consumer, join)
     send(producer, emit)
     assert_receive :continue, 200
@@ -1450,7 +1492,7 @@ defmodule YProcessTest do
     assert_receive :continue, 200
     message = {:message, channel}
     assert_receive {:DELIVERED, _, ^channel, ^message}, 200
-    assert_receive {:timeout, ^channel}, 200
+    assert_receive {:timeout, ^channel}, 500
     assert_receive {:received, ^channel, ^message}, 200
     assert :ok = YProcess.stop(consumer)
     assert :ok = YProcess.stop(producer)
@@ -1461,6 +1503,7 @@ defmodule YProcessTest do
     stop = &({:stop, :normal, &1})
 
     assert {:ok, pid} = YProcess.start_link(EvalYProcess, nil)
+    assert YProcess.wait_ready(pid)
     send(pid, stop)
     assert_receive {:EXIT, ^pid, :normal}, 200
   end
